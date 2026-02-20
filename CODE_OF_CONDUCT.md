@@ -16,6 +16,6 @@ Public or private harassment
 Publishing others' private information without their explicit permission
 Other conduct which could reasonably be considered inappropriate in a professional setting
 Enforcement
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the project team at conduct@nexeom.com. All complaints will be reviewed and investigated promptly and fairly.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the project team at conduct@nexeom.ca. All complaints will be reviewed and investigated promptly and fairly.
 Attribution
 This Code of Conduct is adapted from the Contributor Covenant, version 2.1.
