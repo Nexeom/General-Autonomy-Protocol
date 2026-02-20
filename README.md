@@ -4,7 +4,7 @@
     <strong>The open standard for governed autonomous AI action</strong>
   </p>
   <p align="center">
-    <a href="https://nexeom.com/gap">Website</a> · 
+    <a href="https://nexeom.ca/gap">Website</a> · 
     <a href="#what-is-general-autonomy">Manifesto</a> · 
     <a href="#architecture">Specification</a> · 
     <a href="CONTRIBUTING.md">Contributing</a>
@@ -182,7 +182,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## Community
 
-- **Website:** [nexeom.com/gap](https://nexeom.com/gap)
+- **Website:** [nexeom.ca/gap](https://nexeom.ca/gap)
 - **Discussions:** [GitHub Discussions](https://github.com/Nexeom/General-Autonomy-Protocol/discussions)
 - **Issues:** [GitHub Issues](https://github.com/Nexeom/General-Autonomy-Protocol/issues)
 - **Security:** [SECURITY.md](SECURITY.md)
@@ -206,5 +206,5 @@ The protocol specification, reference implementation, and documentation are free
 </p>
 
 <p align="center">
-  <a href="https://nexeom.com">Nexeom</a> · Bancroft, Ontario, Canada · 2026
+  <a href="https://nexeom.ca">Nexeom</a> · Bancroft, Ontario, Canada · 2026
 </p>
