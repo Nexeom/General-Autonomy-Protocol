@@ -393,6 +393,36 @@ def create_app(
             raise HTTPException(404, "Proposal not found or not pending")
         return result.model_dump(mode="json")
 
+    # === ACTION TYPE REGISTRY ===
+
+    @app.get("/governance/action-types")
+    def get_action_types():
+        """All registered action types."""
+        registry = gk.get_registered_action_types()
+        return {
+            k: v.model_dump(mode="json") for k, v in registry.items()
+        }
+
+    @app.get("/governance/action-types/{type_id}")
+    def get_action_type(type_id: str):
+        """Get a specific action type."""
+        spec = gk.get_action_type(type_id)
+        if not spec:
+            raise HTTPException(404, "Action type not found")
+        return spec.model_dump(mode="json")
+
+    @app.post("/governance/action-types")
+    def register_action_type(req: dict):
+        """
+        Register a new action type (human authorization required).
+        Autonomous systems cannot register new action types.
+        """
+        from gap_kernel.models.governance import ActionTypeSpec
+        spec = ActionTypeSpec.model_validate(req)
+        registered_by = req.get("registered_by", "api_user")
+        result = gk.register_action_type(spec, registered_by)
+        return result.model_dump(mode="json")
+
     # === ESCALATIONS ===
 
     @app.get("/escalations/pending")

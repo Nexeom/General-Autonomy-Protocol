@@ -3,11 +3,28 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from gap_kernel.models.governance import GovernanceDecision
+from gap_kernel.models.governance import GovernanceDecision, UncertaintyDeclaration
 from gap_kernel.models.intent import IntentVector
 from gap_kernel.models.strategy import StrategyProposal
+
+
+class ArtifactProvenance(BaseModel):
+    """
+    Output Artifact Provenance — tracks governance-relevant metadata for durable outputs.
+
+    Required when a governed action produces a durable output that persists
+    beyond the action itself. Actions that modify state without producing
+    a discrete artifact carry standard Decision Records without provenance.
+    """
+    artifact_id: str
+    artifact_type: str                     # e.g., "report", "recommendation", "component"
+    integrity_hash: str                    # Cryptographic verification of artifact content
+    validation_evidence: dict = {}         # What validation was performed, by whom, results
+    validation_independent: bool = False   # Whether validating entity is independent of producer
+    validating_entity: Optional[str] = None
+    quality_uncertainty: Optional[UncertaintyDeclaration] = None
 
 
 class LineageRecord(BaseModel):
@@ -48,6 +65,12 @@ class LineageRecord(BaseModel):
     priority_override_applied: bool = False
     deprioritized_intent: Optional[str] = None
     deprioritization_rationale: Optional[str] = None
+
+    # STRUCTURED UNCERTAINTY
+    uncertainty: Optional[UncertaintyDeclaration] = None
+
+    # OUTPUT ARTIFACT PROVENANCE
+    artifact_provenance: Optional[ArtifactProvenance] = None
 
     # INTEGRITY
     signature: str = ""
