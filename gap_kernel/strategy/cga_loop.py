@@ -399,6 +399,13 @@ class CGAResult:
                         f"{self.intent.id} (priority {self.intent.priority})"
                     )
 
+        # Aggregate uncertainty from the final governance decision
+        final_uncertainty = None
+        for decision in reversed(self.decisions):
+            if decision.uncertainty:
+                final_uncertainty = decision.uncertainty
+                break
+
         return LineageRecord(
             id=f"lin_{uuid4().hex[:12]}",
             cycle_id=cycle_id,
@@ -425,4 +432,5 @@ class CGAResult:
             priority_override_applied=priority_override,
             deprioritized_intent=deprioritized,
             deprioritization_rationale=deprioritization_rationale,
+            uncertainty=final_uncertainty,
         )
