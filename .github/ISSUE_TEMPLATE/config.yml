@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Protocol Discussion
+    url: https://github.com/nexeom/gap/discussions
+    about: Discuss protocol design, propose extensions, and ask questions
+  - name: Commercial Inquiries
+    url: https://nexeom.com/gap
+    about: Enterprise implementation, RGAP integration, consulting, and certification
