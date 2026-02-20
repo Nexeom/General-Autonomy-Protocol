@@ -7,7 +7,7 @@ Thank you for your interest in contributing to the General Autonomy Protocol. GA
 ### Reporting Issues
 
 - Use [GitHub Issues](https://github.com/Nexeom/General-Autonomy-Protocol/issues) for bug reports, protocol questions, and feature requests
-- For security vulnerabilities, please email security@nexeom.com directly — do not open a public issue
+- For security vulnerabilities, please email security@nexeom.ca directly — do not open a public issue
 
 ### Protocol Feedback
 
@@ -76,4 +76,4 @@ All participants are expected to follow our [Code of Conduct](CODE_OF_CONDUCT.md
 
 ---
 
-Questions? Open a [Discussion](https://github.com/Nexeom/General-Autonomy-Protocol/discussions) or reach out at contribute@nexeom.com.
+Questions? Open a [Discussion](https://github.com/Nexeom/General-Autonomy-Protocol/discussions) or reach out at contribute@nexeom.ca.
