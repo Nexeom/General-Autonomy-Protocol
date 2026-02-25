@@ -22,6 +22,10 @@ from uuid import uuid4
 
 from croniter import croniter
 
+from gap_kernel.governance.dynamic_risk import (
+    DynamicRiskEngine,
+    EscalationConfig,
+)
 from gap_kernel.models.governance import (
     ActionTypeSpec,
     AuthorizationLevel,
@@ -449,8 +453,11 @@ class GovernanceKernel:
     - Separation of Creation and Validation enforcement
     """
 
-    def __init__(self):
+    def __init__(self, escalation_config: Optional[EscalationConfig] = None):
         self._action_type_registry: Dict[str, ActionTypeSpec] = dict(_BASELINE_ACTION_TYPES)
+        self._dynamic_risk_engine = DynamicRiskEngine(
+            escalation_config or EscalationConfig()
+        )
 
     # --- Action Type Registry ---
 
@@ -657,6 +664,44 @@ class GovernanceKernel:
             if action_spec and action_spec.default_authorization_level.value > auth_level.value:
                 auth_level = action_spec.default_authorization_level
 
+        # 4a. Dynamic Risk Escalation — check for runtime behavioral signals
+        escalation_triggered = False
+        escalation_reason = None
+        original_auth_level_str = None
+        escalated_auth_level_str = None
+        escalation_evidence = None
+
+        escalation_trigger = self._dynamic_risk_engine.evaluate(
+            action_type=action_type_id or proposal.actions[0].action_type if proposal.actions else "unknown",
+            action_context={
+                "current_auth_level": auth_level.value,
+                "target": proposal.actions[0].target if proposal.actions else "",
+                "proposal_id": proposal.id,
+            },
+            current_auth_level=auth_level.value,
+        )
+
+        if escalation_trigger is not None:
+            escalation_triggered = True
+            escalation_reason = escalation_trigger.description
+            original_auth_level_str = escalation_trigger.original_level
+            escalated_auth_level_str = escalation_trigger.escalated_level
+            escalation_evidence = escalation_trigger.evidence
+
+            # Apply escalation: override auth_level if escalated is higher
+            level_order = {"L0": 0, "L1": 1, "L2": 2, "L3": 3, "L4": 4}
+            escalated_idx = level_order.get(escalation_trigger.escalated_level, 0)
+            current_idx = level_order.get(auth_level.value, 0)
+            if escalated_idx > current_idx:
+                auth_level = AuthorizationLevel(escalation_trigger.escalated_level)
+                # Update legacy tier if escalation pushes to escalate range
+                if escalated_idx >= 4:
+                    tier = "escalate"
+                elif escalated_idx >= 3:
+                    tier = "require_approval"
+                elif escalated_idx >= 2:
+                    tier = "require_approval"
+
         # If risk exceeds system authority (L4), escalate
         if tier == "escalate":
             return GovernanceDecision(
@@ -675,6 +720,11 @@ class GovernanceKernel:
                 evaluated_at=current_time,
                 uncertainty=uncertainty,
                 action_type_id=action_type_id,
+                escalation_triggered=escalation_triggered,
+                escalation_reason=escalation_reason,
+                original_authorization_level=original_auth_level_str,
+                escalated_authorization_level=escalated_auth_level_str,
+                escalation_evidence=escalation_evidence,
             )
 
         # 5. Check intent conflicts
@@ -737,7 +787,7 @@ class GovernanceKernel:
                             phase_results=phase_results,
                         )
 
-        # 7. Approved
+        # 7. Approved — record escalation details if triggered
         return GovernanceDecision(
             id=decision_id,
             proposal_id=proposal.id,
@@ -751,6 +801,11 @@ class GovernanceKernel:
             uncertainty=uncertainty,
             action_type_id=action_type_id,
             phase_results=phase_results,
+            escalation_triggered=escalation_triggered,
+            escalation_reason=escalation_reason,
+            original_authorization_level=original_auth_level_str,
+            escalated_authorization_level=escalated_auth_level_str,
+            escalation_evidence=escalation_evidence,
         )
 
     def _get_active_constraints(

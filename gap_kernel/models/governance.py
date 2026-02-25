@@ -102,3 +102,15 @@ class GovernanceDecision(BaseModel):
     uncertainty: Optional[UncertaintyDeclaration] = None
     action_type_id: Optional[str] = None
     phase_results: List[GovernancePhaseResult] = []
+
+    # Dynamic Risk Escalation fields (Added 2026-02-23)
+    escalation_triggered: bool = False
+    escalation_reason: Optional[str] = None
+    original_authorization_level: Optional[str] = None
+    escalated_authorization_level: Optional[str] = None
+    escalation_evidence: Optional[dict] = None
+
+    # Out-of-Band Authority Verification fields (Added 2026-02-23)
+    authority_verification_method: Optional[str] = None  # e.g., "hardware_key", "oob_code", "biometric"
+    authority_verification_channel: Optional[str] = None  # e.g., "independent_mfa", "physical_token"
+    authority_verified_at: Optional[datetime] = None

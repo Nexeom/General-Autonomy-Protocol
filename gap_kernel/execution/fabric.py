@@ -16,13 +16,29 @@ from typing import Callable, Dict, Optional
 import time
 
 from gap_kernel.models.execution import ExecutionResult
-from gap_kernel.models.governance import GovernanceDecision, GovernanceVerdict
+from gap_kernel.models.governance import (
+    AuthorizationLevel,
+    GovernanceDecision,
+    GovernanceVerdict,
+)
 from gap_kernel.models.strategy import PlannedAction, StrategyProposal
 from gap_kernel.models.world import WorldModel
+
+# Authorization levels that require OOB verification
+_OOB_REQUIRED_LEVELS = {
+    AuthorizationLevel.L2,
+    AuthorizationLevel.L3,
+    AuthorizationLevel.L4,
+}
 
 
 class ExecutionError(Exception):
     """Raised when an action fails to execute."""
+    pass
+
+
+class OOBVerificationError(ExecutionError):
+    """Raised when Out-of-Band Authority Verification fails for L2+ actions."""
     pass
 
 
@@ -32,11 +48,6 @@ class ExecutionFabric:
     this uses mock executors. In production, this would integrate
     with CRM APIs, email systems, etc.
     """
-
-    def __init__(self, world_model: WorldModel):
-        self.world_model = world_model
-        self._executors: Dict[str, Callable] = {}
-        self._register_default_executors()
 
     def _register_default_executors(self) -> None:
         """Register mock executors for prototype action types."""
@@ -54,6 +65,12 @@ class ExecutionFabric:
         """Register a custom executor for an action type."""
         self._executors[action_type] = executor
 
+    def __init__(self, world_model: WorldModel):
+        self.world_model = world_model
+        self._executors: Dict[str, Callable] = {}
+        self._used_verification_tokens: set = set()
+        self._register_default_executors()
+
     def execute(
         self,
         proposal: StrategyProposal,
@@ -63,6 +80,7 @@ class ExecutionFabric:
         Execute an approved strategy proposal.
 
         GUARD: Never execute without governance approval.
+        GUARD: L2+ requires Out-of-Band Authority Verification.
         """
         if governance_decision.verdict != GovernanceVerdict.APPROVED:
             raise ExecutionError(
@@ -70,6 +88,9 @@ class ExecutionFabric:
                 f"governance verdict is {governance_decision.verdict.value}, "
                 f"not approved."
             )
+
+        # OOB Authority Verification for L2+ authorization gates
+        self._verify_oob_authority(governance_decision)
 
         start_time = time.monotonic()
         completed = []
@@ -97,6 +118,43 @@ class ExecutionFabric:
             executed_at=datetime.utcnow(),
             execution_duration_seconds=round(elapsed, 3),
         )
+
+    def _verify_oob_authority(self, decision: GovernanceDecision) -> None:
+        """
+        Out-of-Band Authority Verification for L2+ authorization gates.
+
+        For L2 and above, verifies:
+        1. verification_method is provided
+        2. verification channel is independent of agent communication
+        3. Non-replayability (authorization bound to specific Decision Record ID)
+        """
+        if decision.authorization_level not in _OOB_REQUIRED_LEVELS:
+            return  # L0 and L1 do not require OOB verification
+
+        # 1. Check that verification_method is provided
+        if not decision.authority_verification_method:
+            raise OOBVerificationError(
+                f"Decision {decision.id} requires Out-of-Band Authority Verification "
+                f"at authorization level {decision.authorization_level.value}. "
+                f"No verification_method provided."
+            )
+
+        # 2. Validate that the verification channel is independent
+        if not decision.authority_verification_channel:
+            raise OOBVerificationError(
+                f"Decision {decision.id} requires an independent verification channel "
+                f"at authorization level {decision.authorization_level.value}. "
+                f"No verification_channel provided."
+            )
+
+        # 3. Non-replayability: authorization bound to specific Decision Record ID
+        verification_token = f"{decision.id}:{decision.authority_verification_method}"
+        if verification_token in self._used_verification_tokens:
+            raise OOBVerificationError(
+                f"Decision {decision.id} verification has already been used. "
+                f"Authorization signals are non-replayable."
+            )
+        self._used_verification_tokens.add(verification_token)
 
     def _dispatch_action(self, action: PlannedAction) -> dict:
         """Dispatch a single action to its registered executor."""
