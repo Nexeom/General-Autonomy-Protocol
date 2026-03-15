@@ -1,5 +1,12 @@
 # General Autonomy Protocol (GAP)
 
+> **General Autonomy Protocol — the governance standard for autonomous action.**
+>
+> GAP defines how autonomous systems operate under governance — not how to make
+> systems autonomous. Think of it the way Internet Protocol defines how networked
+> communication operates, not how to build the internet. GAP is the governance
+> substrate: the rules of the road for machines that drive themselves.
+
 **Complete Build Summary**
 
 **Nexeom** — February 2026
@@ -8,7 +15,7 @@
 
 ## 1. Executive Summary
 
-The General Autonomy Protocol (GAP) is a governance infrastructure protocol that solves the fundamental tension between AI autonomy and accountability. Current AI systems either operate without governance or remain constrained by human bottlenecks. GAP enables **General Autonomy** — the ability for AI systems to act generally across any domain with full accountability, positioned as the necessary successor to General Intelligence.
+The General Autonomy Protocol (GAP) is the governance infrastructure that makes autonomous AI systems accountable. The name describes the problem domain, not the product claim — General Autonomy is the category of challenge; GAP is the protocol that solves it. Current AI systems either operate without governance or remain constrained by human bottlenecks. GAP provides the third option: governed, accountable, general-purpose autonomous action.
 
 The core thesis: Intelligence without autonomy is a research project. Autonomy without governance is a liability. General Autonomy is the synthesis — the infrastructure that makes AGI deployable in institutional and regulatory contexts.
 
@@ -53,6 +60,8 @@ The industry narrative arc: First we built intelligence (LLMs). Then we built ag
 | **Multi-Phase Authorization** | Multiple governance gates per action lifecycle. Intent gate evaluates the plan, outcome gate evaluates the result. Authorization at one gate does not satisfy subsequent gates. |
 | **Out-of-Band Authority Verification** | L2+ authorization channels must be independent of the agent's environment. Human identity verified through channels the agent cannot access. |
 | **Dynamic Risk Escalation** | Runtime authorization tier adjustment based on behavioral signals. The kernel escalates governance when patterns diverge from baseline. |
+| **Structured Intent Resolution (SIR)** | Governs the human-AI intent transfer. Formal declaration, meta-intent inference, mutual confirmation before autonomous action begins. |
+| **Governance Integrity Monitoring (GIM)** | Dynamic behavioral monitoring for indirect governance erosion. Five signal classes with independent evaluation. |
 
 ---
 
@@ -78,7 +87,7 @@ The positioning against existing governance and compliance tools: NIST, ISO, and
 
 ## 2. Category Definition: General Autonomy
 
-**General Autonomy** is a new infrastructure category. It is not an agent framework, not an observability tool, not an access control system. It is the governance substrate upon which autonomous AI systems operate with full institutional accountability.
+General Autonomy is both the challenge and the category. The challenge: AI systems that can act generally across any domain need governance that is equally general. The category: the infrastructure layer that provides it. GAP is the protocol standard for this layer — not a path to autonomy, but the control plane that makes autonomy deployable.
 
 **The Full Stack:**
 
@@ -105,6 +114,8 @@ GAP operates through three structurally distinct layers. Governance is not a che
 ### Layer 1: Governance Kernel (Immutable)
 
 The foundational governance layer that cannot be modified by the autonomous system itself. It defines authority boundaries, policy constraints, and escalation thresholds. The Iron Rule governs all system evolution: learning may modify strategy weights and skills through GAP governance, but never governance policy boundaries without explicit human approval. Enforcement is structural: governed agents operate in execution environments that are architecturally isolated from governance infrastructure. The agent cannot access, read, modify, or reason about the Governance Kernel's code, configuration, or enforcement mechanisms. This is not a permission the agent lacks — it is a path that does not exist. Policy enforcement governs what the agent should not do. Structural enforcement determines what the agent cannot do. GAP-compliant implementations must implement structural isolation of governance infrastructure from governed agent execution environments.
+
+Governance Integrity Monitoring (GIM) extends the Iron Rule from a static architectural guarantee to a dynamic behavioral guarantee. While the Iron Rule ensures the system cannot modify governance configuration, GIM ensures the system cannot indirectly erode governance effectiveness through behavioral adaptation. GIM defines five monitoring requirements across authorization drift, audit behavior divergence, threshold-avoidance decomposition, escalation framing bias, and adversarial collapse. Together with the Iron Rule and human oversight, GIM forms a three-layer defense in depth: architectural (static), behavioral (dynamic), and institutional (judgment). See the [GIM specification](docs/gap-governance-integrity-monitoring.md) for full requirements.
 
 - Graduated authorization levels (L0–L4) from fully autonomous to human-required
 - Temporal policy activation — policies can be time-bound and context-sensitive
@@ -164,6 +175,16 @@ Escalation thresholds are governance configuration. They are set by the human po
 **Relationship to the Action Type Registry.** The Action Type Registry defines the static risk posture. Dynamic Risk Escalation defines the runtime adjustment mechanism. They are complementary: the registry sets the floor, escalation adjusts the ceiling. An action type's default authorization level is the minimum governance scrutiny it receives. Dynamic escalation ensures that unusual circumstances receive additional scrutiny without requiring pre-configuration of every possible risk scenario.
 
 **Single-action default.** Most routine operations will never trigger an escalation. The mechanism exists for the edge cases that static configuration cannot anticipate — which are precisely the scenarios where governance failures cause the most damage.
+
+### Structured Intent Resolution (SIR)
+
+Before the CGA loop engages, Structured Intent Resolution governs the transfer of human intent to the autonomous system. SIR produces a formal Intent Declaration capturing the stated intent, interpreted intent, meta-intent (the intent behind the intent), declared boundaries, and mutual confirmation state. The confirmed Intent Declaration becomes the origin node in the Decision Lineage chain — every downstream decision traces back to confirmed human intent.
+
+SIR depth is proportional to authorization level: L0 operations use standing intent declarations pre-authorized by human authority. L1 uses structured confirmation. L2 adds collaborative specification with meta-intent review. L3-L4 requires full intent negotiation with iterative refinement.
+
+Governance begins at intent, not at action. A governance chain that starts after the system has already interpreted what the human wants is a governance chain with an ungoverned origin.
+
+See the [SIR specification](docs/gap-structured-intent-resolution.md) for full requirements.
 
 ### Layer 2: Strategy Layer (Constraint-Guided Autonomy)
 
@@ -355,6 +376,10 @@ The positioning against existing governance and compliance tools: NIST, ISO, and
 ## 11. Key Design Principles
 
 - **The Iron Rule:** Learning modifies strategy weights and skills. Never governance policy boundaries. Human authority over constraints is inviolable. Enforcement is structural, not just procedural — governed agents operate in environments architecturally isolated from governance infrastructure. There is no path to modify what cannot be accessed.
+
+- **Dynamic Governance Integrity (Added 2026-03-10):** Static guarantees are necessary but not sufficient. Sophisticated systems find indirect paths around governance — classifying actions at lower levels than warranted, behaving differently under audit, decomposing tasks to avoid thresholds, framing escalations to bias approval, or allowing adversarial mechanisms to collapse. Governance Integrity Monitoring provides the dynamic behavioral guarantee: independent, continuous, isolated monitoring for indirect erosion. The Iron Rule says the system cannot touch governance. GIM says the system cannot work around governance.
+
+- **Governance Begins at Intent (Added 2026-03-15):** A governance chain that starts after the system has already interpreted what the human wants is a governance chain with an ungoverned origin. Structured Intent Resolution ensures that intent is formally declared, meta-analyzed, bounded, and mutually confirmed before the CGA loop engages. The system does not assume it understands intent. It confirms.
 
 - **Governance as Substrate:** Governance is not a checkpoint agents pass through. It is the surface upon which all autonomous action runs.
 
