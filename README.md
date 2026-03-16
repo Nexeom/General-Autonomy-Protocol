@@ -30,7 +30,8 @@ The industry narrative arc: First we built intelligence (LLMs). Then we built ag
 │                 GOVERNANCE KERNEL                     │
 │  Immutable · Authority Boundaries · Iron Rule         │
 │  Action Type Registry · Multi-Phase Authorization     │
-│  Dynamic Risk Escalation                              │
+│  Dynamic Risk Escalation · Policy Tier Classification │
+│  Regulatory Constraints · Applicability Profiles      │
 │  Structural Enforcement (not just policy checks)      │
 ├─────────────────────────────────────────────────────┤
 │                  STRATEGY LAYER                       │
@@ -62,6 +63,9 @@ The industry narrative arc: First we built intelligence (LLMs). Then we built ag
 | **Dynamic Risk Escalation** | Runtime authorization tier adjustment based on behavioral signals. The kernel escalates governance when patterns diverge from baseline. |
 | **Structured Intent Resolution (SIR)** | Governs the human-AI intent transfer. Formal declaration, meta-intent inference, mutual confirmation before autonomous action begins. |
 | **Governance Integrity Monitoring (GIM)** | Dynamic behavioral monitoring for indirect governance erosion. Five signal classes with independent evaluation. |
+| **Policy Tier Classification** | Three-tier policy hierarchy: immutable regulatory floor, client-configurable organizational policy, agent-tunable operational parameters. Lower tiers cannot exceed upper tier bounds. |
+| **Applicability Profiles** | Deployment-time governance scoping. Selects active regulatory constraint categories based on domain, jurisdiction, and action types. Proportional governance — right constraints for right actions. |
+| **Regulatory Constraint Categories** | Eight categories of legal obligation — three universal (data privacy, communications, transparency), five domain-activated — populating the Tier 1 regulatory floor. |
 
 ---
 
@@ -126,7 +130,7 @@ Governance Integrity Monitoring (GIM) extends the Iron Rule from a static archit
 
 The Governance Kernel maintains a registry of action types — the categories of autonomous action the system can take. Each action type carries its own governance configuration: default authorization level, applicable policy set, risk profile, escalation rules, and phase configuration. The kernel evaluates proposed actions against the configuration for their registered type. Actions submitted with an unregistered type are rejected by the kernel. The system cannot take actions outside its registered governance configuration.
 
-The protocol defines five baseline action types:
+The protocol defines six baseline action types:
 
 | Action Type | Description |
 |---|---|
@@ -135,6 +139,9 @@ The protocol defines five baseline action types:
 | `drift_reconciliation` | Autonomous corrective action when world state diverges from declared intent |
 | `escalation` | Routing a decision to human authority at the system's authorized boundary |
 | `policy_proposal` | Proposing a change to governance policy (human decides) |
+| `outbound_communication` | Sending any communication to a human recipient outside the governed system — email, SMS, chat message, automated voice, notification, or any other channel that reaches an individual |
+
+The `outbound_communication` action type is a protocol-level baseline because communications compliance applies universally — virtually every enterprise deployment involves an autonomous agent sending messages to humans. Unlike domain-specific action types that are registered per deployment, `outbound_communication` exists in every GAP-compliant system's Action Type Registry by default. The action type carries default governance configuration: Communications Compliance Constraints (Category 2) are always evaluated. Data Privacy Constraints (Category 1) are evaluated when the communication contains or references personal data. The default authorization level is L1 (Notify) for routine operational communications and L2 (Approve Before) for communications that are commercial, mass-distributed, or directed to recipients with whom no prior business relationship exists. Tier 2 organizational policies may further restrict `outbound_communication`: specifying approved sender accounts, defining permitted communication channels, setting volume limits, restricting recipient jurisdictions, requiring human review for specific communication types, and enforcing tone or content guidelines. These operate above the Tier 1 regulatory floor.
 
 GAP-adopting systems may register additional action types to govern domain-specific autonomous actions. Each registered type must specify: a unique type identifier, a risk profile assessing impact scope, reversibility, and blast radius, a default authorization level (L0–L4, overridable by policy), applicable governance policies, escalation configuration, and phase configuration (single-gate or multi-phase — see Multi-Phase Authorization below). Registering a new action type is itself a governed action requiring human authorization. Autonomous systems cannot register new action types.
 
@@ -175,6 +182,153 @@ Escalation thresholds are governance configuration. They are set by the human po
 **Relationship to the Action Type Registry.** The Action Type Registry defines the static risk posture. Dynamic Risk Escalation defines the runtime adjustment mechanism. They are complementary: the registry sets the floor, escalation adjusts the ceiling. An action type's default authorization level is the minimum governance scrutiny it receives. Dynamic escalation ensures that unusual circumstances receive additional scrutiny without requiring pre-configuration of every possible risk scenario.
 
 **Single-action default.** Most routine operations will never trigger an escalation. The mechanism exists for the edge cases that static configuration cannot anticipate — which are precisely the scenarios where governance failures cause the most damage.
+
+#### Policy Tier Classification (Added 2026-03-15)
+
+Governance policies within the Governance Kernel are classified into three tiers. The tier hierarchy is enforced architecturally — the same structural enforcement principle that governs the Iron Rule applies to the relationship between tiers. Lower tiers cannot exceed upper tier bounds. This is not a permission check; it is a structural constraint.
+
+**Tier 1 — Regulatory Floor (Immutable).** Derived from applicable law and regulation. Tier 1 policies represent the legal minimum below which no configuration — by client administrator, governance administrator, or autonomous agent — can operate. Tier 1 policies are loaded into the Governance Kernel through the Applicability Profile at deployment and cannot be weakened, narrowed, or suspended during operation.
+
+Modifying Tier 1 policies requires a protocol-level update with legal review and explicit authorization outside the governed system. This is not a governance action the agent or client performs within GAP — it is an external process that produces an updated Applicability Profile. The Governance Kernel treats active Tier 1 policies as axiomatic: they are not reasoned about, negotiated with, or subjected to Constraint-Guided Autonomy. When a proposed action violates a Tier 1 constraint, the rejection is absolute. CGA does not engage. The action is denied, the Decision Record documents the Tier 1 violation, and the system escalates to human authority if the objective cannot be achieved without violating the regulatory floor.
+
+The structural guarantee: an auditor asking "can this system be configured to violate applicable law?" receives the answer: "No. Regulatory floor constraints are architecturally immutable. Client configuration operates above the legal floor, never below it."
+
+**Tier 2 — Organizational Policy (Client-Configurable, Governed).** Set by the client organization's authorized governance administrators. Tier 2 policies define the business rules, operational boundaries, and organizational constraints that shape how the autonomous system operates within the regulatory floor. Examples include: restricting outbound communications to specific sender accounts, requiring human approval for expenditures above a configured threshold, limiting operations to specific jurisdictions, defining service-level response windows, and restricting data access by role or department.
+
+Tier 2 policies can be made stricter than Tier 1 but never weaker. A client may require L2 human approval for all outbound emails even when Tier 1 only requires consent verification — but a client cannot disable consent verification because it exists at Tier 1.
+
+Modifications to Tier 2 policies are themselves governed actions requiring L3 (Collaborative) or L4 (Human Only) authorization. Every modification is recorded in Decision Lineage with full justification, the identity of the authorizing human, and the timestamp. This creates a complete audit trail of organizational policy evolution — an auditor can trace not only what policies were in effect at any point in time but who changed them, when, and why.
+
+**Tier 3 — Operational Parameters (Agent-Tunable Within Bounds).** Performance parameters, strategy weights, skill configurations, and execution preferences that the autonomous system may adjust through governed self-evolution. Tier 3 parameters are bounded by both Tier 1 and Tier 2 — the agent can optimize its operational behavior but cannot tune its way past organizational policy or regulatory constraints.
+
+Tier 3 modifications follow existing GAP governance: they pass through the Proposer/Critic adversarial loop, are evaluated by the Governance Kernel, and are recorded in Decision Records. The Iron Rule already governs this boundary — Policy Tier Classification makes the hierarchy explicit and names the tiers for audit and compliance purposes.
+
+**Structural Hierarchy Guarantee.** The tier hierarchy operates as follows: Tier 3 ≤ Tier 2 ≤ Tier 1. Operational parameters cannot exceed organizational policy bounds. Organizational policies cannot go below the regulatory floor. The regulatory floor cannot be modified without protocol-level intervention external to the governed system.
+
+This hierarchy is enforced by the Governance Kernel at every policy evaluation. When the Kernel evaluates a proposed action, it checks Tier 1 first. If Tier 1 rejects, the action is denied absolutely. If Tier 1 passes, Tier 2 is evaluated. If Tier 2 rejects, CGA engages within Tier 2 bounds. Tier 3 parameters influence how the agent proposes actions but do not participate in governance evaluation — they shape behavior upstream of the Governance Kernel, not within it.
+
+**Why This Is a Protocol-Level Requirement.** Every governance system faces the configuration problem: if a human administrator can configure the system to permit legally non-compliant actions, the governance is a preference, not a guarantee. Permission-based systems (IAM, RBAC, API access controls) are configuration-dependent by design — they do whatever the administrator configures. This is appropriate for access control but insufficient for governance of autonomous systems that execute actions with legal consequences.
+
+Policy Tier Classification eliminates the configuration risk by separating what can be configured from what cannot. Regulatory constraints are not configurable. Organizational policies are configurable within regulatory bounds. Operational parameters are tunable within organizational bounds. The hierarchy is structural, not advisory.
+
+#### Applicability Profiles (Added 2026-03-15)
+
+A GAP-compliant system does not load all Regulatory Constraint Categories uniformly. Governance scales with risk. A scheduling agent does not carry healthcare compliance constraints. A financial trading agent does not carry communications marketing rules. Proportional governance — applying the right constraints to the right actions in the right domains — is what makes governance deployable rather than merely compliant.
+
+At deployment, a GAP-compliant system declares an Applicability Profile. The profile specifies:
+
+**Active Regulatory Constraint Categories.** Which of the eight Regulatory Constraint Categories (see below) apply to this deployment, based on domain, jurisdiction, and the action types the system will perform. The three Universal Categories are always active. Domain-Activated Categories are loaded based on the profile declaration.
+
+**Jurisdictional Scope.** Which legal jurisdictions apply, determining the specific regulatory requirements within each active category. A system operating in the EU loads GDPR requirements within the Data Privacy category. A system operating in Canada loads PIPEDA and CASL. A system operating across multiple jurisdictions loads the union of applicable requirements.
+
+**Action Type Scope.** Which registered action types this deployment will perform. The Governance Kernel only permits execution of action types declared in the profile. An action type not in the profile is rejected — the system cannot perform actions it has not been governed to perform.
+
+**Profile Governance.** The Applicability Profile is itself a governed configuration artifact:
+
+Profile creation requires L4 (Human Only) authorization. A human with appropriate authority declares the deployment's domain, jurisdiction, and action type scope. The system does not self-classify.
+
+Profile expansion (adding categories, jurisdictions, or action types) requires L3 or L4 authorization. Expanding the profile adds governance — it makes the system more constrained, not less.
+
+Profile narrowing (removing categories, jurisdictions, or action types) requires L4 authorization with documented legal justification. Narrowing the profile removes governance — it must be justified by a change in the system's operational scope, not by a desire for less constraint. The Decision Record for a profile narrowing must document why the removed category or jurisdiction no longer applies.
+
+Profile declaration is immutable to the agent. The autonomous system cannot modify, narrow, or reason about its own Applicability Profile. This follows the same structural enforcement principle as the Iron Rule: the profile is not a permission the agent lacks; it is a configuration the agent cannot access.
+
+**Boundary Enforcement.** When a governed agent encounters an action that falls outside its declared Applicability Profile — for example, a marketing agent that needs to process a financial transaction — the Governance Kernel rejects the action because there is no applicable Tier 1 policy loaded for that action type in the active profile. The agent cannot perform actions for which governance has not been configured. This prevents two failure modes simultaneously:
+
+*Over-governance:* a scheduling agent is not evaluated against healthcare constraints it does not need. Governance overhead is proportional to operational risk.
+
+*Under-governance:* an agent cannot wander into ungoverned territory. If the action type is not in the profile, the action does not execute.
+
+**Why This Is a Protocol-Level Requirement.** Every major regulatory framework uses risk-based classification. The EU AI Act classifies systems by risk tier. Colorado's AI Act targets high-risk AI making consequential decisions. The NIST AI RMF uses profiles for sector-specific risk management. ISO 42001 requires scoped management systems. Applicability Profiles implement this principle structurally: governance is proportional to risk, configured at deployment, and immutable to the governed system.
+
+This is what makes GAP deployable at scale. Without Applicability Profiles, every deployment carries the full regulatory burden regardless of operational scope. With Applicability Profiles, a simple internal operations agent deploys with minimal governance overhead while a high-risk lending agent deploys with full fairness evaluation, anti-discrimination constraints, and audit-grade decision records. The governance scales with what the agent actually does.
+
+#### Regulatory Constraint Categories (Added 2026-03-15)
+
+The Tier 1 Regulatory Floor is populated by Regulatory Constraint Categories — classes of legal obligation that autonomous AI systems must satisfy. GAP defines eight categories: three Universal (active in every GAP deployment) and five Domain-Activated (loaded when the Applicability Profile includes the relevant domain).
+
+The protocol defines the categories and their structural requirements. Specific regulatory content within each category is jurisdiction-dependent and domain-configured through the Action Type Registry. This follows GAP's established extensibility pattern: protocol defines the mechanism, implementation defines the configuration.
+
+**Universal Categories (Always Active)**
+
+These categories apply to every GAP-compliant deployment regardless of domain, jurisdiction, or action type scope. They represent legal obligations that are effectively universal across all jurisdictions where autonomous AI systems operate.
+
+**Category 1: Data Privacy Constraints**
+
+Applicable laws: GDPR (EU), CCPA/CPRA (California), PIPEDA (Canada), state privacy laws (Virginia, Colorado, Connecticut, Indiana, Kentucky, Oregon, Rhode Island, and others), UK Data Use and Access Act, India DPDP Act, Brazil LGPD, China PIPL.
+
+Structural requirements: The Governance Kernel must evaluate proposed actions that access, process, store, or transmit personal data against data privacy constraints before execution. Minimum Tier 1 requirements include:
+
+- *Data Classification.* Every governed action that handles data must carry a Data Classification Tag identifying the data categories involved (PII, sensitive PII, financial data, biometric data, children's data, health data). The Governance Kernel evaluates the action against the constraints applicable to the highest-sensitivity classification present.
+- *Consent Verification.* Before processing personal data, the Governance Kernel verifies that valid consent or an applicable legal basis exists for the specific processing purpose. The Decision Record documents the consent status or legal basis relied upon.
+- *Data Residency.* When jurisdictional data residency requirements apply, the Governance Kernel prevents data transfers that violate residency constraints. The agent cannot transfer EU personal data to a non-adequate jurisdiction without appropriate safeguards.
+- *Purpose Limitation.* Data accessed for one governed purpose cannot be used for a different purpose without independent governance evaluation.
+- *Minimization.* The Governance Kernel evaluates whether the data access requested is proportionate to the action's purpose. Bulk access to personal data when the action requires a single record should trigger escalation.
+
+**Category 2: Communications Compliance Constraints**
+
+Applicable laws: CAN-SPAM Act (US), TCPA (US), CASL (Canada), ePrivacy Directive (EU), state-level robocall and text restrictions, sector-specific communication rules.
+
+Structural requirements: Virtually every enterprise deployment involves autonomous agents sending communications — emails, messages, notifications, or automated responses. Communications compliance is therefore a universal category, not a domain-specific one. Minimum Tier 1 requirements include:
+
+- *Consent-Before-Contact.* For commercial communications, the Governance Kernel verifies that the recipient has provided applicable consent (express consent under CASL, opt-in or existing business relationship under CAN-SPAM) before authorizing the communication. The Decision Record documents the consent basis.
+- *Sender Accuracy.* Outbound communications must accurately identify the sending entity. The Governance Kernel validates that the sender identity in the communication matches the authorized sender configuration.
+- *Opt-Out Mechanism.* Commercial communications must include a functioning opt-out mechanism. The Governance Kernel validates the presence of the mechanism before authorizing distribution.
+- *Channel Restrictions.* Automated voice calls and text messages carry additional regulatory requirements (TCPA prior express consent, do-not-call registry compliance). The Governance Kernel evaluates channel-specific constraints based on the communication method.
+
+**Category 3: Transparency Constraints**
+
+Applicable laws: EU AI Act transparency requirements, Colorado AI Act consumer disclosures, Texas TRAIGA disclosure requirements, Illinois AI employment notification, California AI Transparency Act, state-level AI interaction disclosure requirements.
+
+Structural requirements: When an autonomous agent interacts with individuals, makes decisions affecting individuals, or produces content that individuals will rely upon, transparency obligations apply. Minimum Tier 1 requirements include:
+
+- *AI Interaction Disclosure.* When a governed agent interacts directly with a consumer, employee, or other individual, the system must disclose that the individual is interacting with an AI system. The Governance Kernel validates that disclosure has occurred before or at the time of interaction.
+- *Decision Explanation Capability.* When a governed action produces a consequential decision affecting an individual, the system must be capable of producing a human-readable explanation of the decision basis. The Decision Record's reasoning chain and Uncertainty Declaration provide the source material; the Governance Kernel validates that the explanation capability exists for the action type.
+- *Content Provenance.* When a governed agent generates content that individuals will encounter (marketing materials, reports, recommendations), the Output Artifact Provenance mechanism documents that the content was AI-generated and provides the audit trail for its creation.
+
+**Domain-Activated Categories**
+
+These categories are loaded when the Applicability Profile includes the relevant domain. They are not active by default — a deployment that does not operate in the relevant domain does not carry these constraints. However, if a governed agent attempts an action that falls within a domain-activated category that is not in its profile, the Governance Kernel rejects the action.
+
+**Category 4: Anti-Discrimination Constraints**
+
+Activated for: Deployments where governed agents make or substantially contribute to consequential decisions affecting individuals in employment, lending, housing, education, healthcare, insurance, or legal services.
+
+Applicable laws: Title VII, Fair Housing Act, Equal Credit Opportunity Act, ADA, ADEA, Colorado AI Act (algorithmic discrimination), Illinois Human Rights Act (AI employment amendment), NYC Local Law 144, EU AI Act prohibited practices.
+
+Structural requirements: Action types classified as consequential decisions must carry a Fairness Evaluation Gate. The Governance Kernel evaluates whether the proposed action's reasoning chain contains indicators of disparate impact on protected classes. Fairness evaluation may be automated (bias detection on decision inputs and outputs) or require mandatory L2+ human review, depending on the action type's risk profile. The Decision Record documents the fairness evaluation performed, its methodology, and its results.
+
+**Category 5: Financial Compliance Constraints**
+
+Activated for: Deployments where governed agents execute financial transactions, manage financial instruments, process payments, or make financial recommendations.
+
+Applicable laws: Securities Exchange Act, Investment Advisers Act, Bank Secrecy Act / AML, FINRA rules, PCI DSS, EU AMLA, MiFID II, PSD3, state money transmitter laws.
+
+Structural requirements: Financial action types must include pre-execution AML screening and sanctions checking for transactions above configurable thresholds. The complete decision-making chain — including data inputs, signal weighting, and human interventions — must be captured in Decision Records at audit-grade fidelity. The SpendGate Action Type (existing) is the reference implementation. This category extends SpendGate's requirements to all financial action types and adds jurisdiction-specific regulatory requirements through the Action Type Registry.
+
+**Category 6: Healthcare Compliance Constraints**
+
+Activated for: Deployments where governed agents access, process, or make decisions involving protected health information or operate within clinical, diagnostic, or treatment contexts.
+
+Applicable laws: HIPAA (US), FDA regulations for AI-powered medical devices, EU Medical Device Regulation, state telehealth laws, PHIPA (Ontario, Canada).
+
+Structural requirements: Healthcare action types must enforce minimum-necessary data access — the Governance Kernel evaluates whether the PHI access requested is proportionate to the action's clinical or operational purpose. Bulk PHI access or unusual access patterns trigger automatic escalation to L2+. Breach detection triggers are configured to initiate notification workflows within regulatory timeframes. Decision Records for healthcare actions carry PHI access justification as a required field.
+
+**Category 7: Safety Constraints**
+
+Activated for: Deployments in safety-critical domains where autonomous actions can affect physical safety, critical infrastructure, or life-safety systems.
+
+Applicable laws: FDA (medical devices), NHTSA (automotive), FAA (aviation), OSHA (workplace safety), NERC (energy grid), sector-specific safety regulations.
+
+Structural requirements: Safety-critical action types must carry hard safety boundaries that cannot be modified by any tier — they represent the intersection of regulatory floor and physical safety. The Governance Kernel evaluates safety-critical actions against domain-specific safety constraints that are configured at deployment by qualified domain authorities and are not subject to CGA negotiation. Safety constraint violations produce immediate escalation to L4 (Human Only) with no retry.
+
+**Category 8: Intellectual Property and Content Constraints**
+
+Activated for: Deployments where governed agents generate, modify, or distribute content including text, code, images, reports, marketing materials, or creative works.
+
+Applicable laws: Copyright Act, DMCA, trademark law, evolving AI training data litigation standards, California AI Transparency Act content provenance requirements.
+
+Structural requirements: Content-generating action types must carry IP risk classification. Output Artifact Provenance (existing) tracks what was produced and how it was validated. This category extends provenance to include IP risk assessment: whether the output poses copyright infringement risk, whether it uses third-party trademarks, and whether provenance metadata is attached for content that enters public distribution. The Governance Kernel evaluates content-generating actions against IP constraints; high-risk outputs (substantial similarity to known protected works, trademark usage, public distribution) trigger escalation for human review.
 
 ### Structured Intent Resolution (SIR)
 
@@ -245,6 +399,32 @@ Output Artifact Provenance extends the Decision Record with: an artifact identif
 Output Artifact Provenance is required when the governed action produces a durable output that persists beyond the action itself. Actions that modify state without producing a discrete artifact (updating a record, sending a notification) carry standard Decision Records without artifact provenance.
 
 The specific provenance fields vary by domain. A financial report requires different provenance than a clinical recommendation requires different provenance than a software component. GAP defines the structural requirements — identifier, integrity, validation, independence, uncertainty — but the detailed schema is domain-configured through the Action Type Registry. This follows the same extensibility pattern: protocol defines the mechanism, implementation defines the configuration.
+
+### Data Classification Tags (Added 2026-03-15)
+
+Every Decision Record for a governed action that handles data must carry a Data Classification Tag. The tag identifies the data categories involved in the action using a standardized classification:
+
+| Classification | Description | Example |
+|---|---|---|
+| **PUBLIC** | Non-sensitive, publicly available | Published marketing content |
+| **INTERNAL** | Organization-internal, not personal | Internal process documentation |
+| **PII** | Personally identifiable information | Customer names, email addresses |
+| **SENSITIVE_PII** | High-sensitivity personal data | SSN, biometric, racial/ethnic data |
+| **FINANCIAL** | Financial account or transaction data | Account numbers, payment cards |
+| **PHI** | Protected health information | Medical records, diagnoses |
+| **MINOR** | Data relating to individuals under 18 | Student records, child user data |
+
+The Governance Kernel evaluates the action against the constraints applicable to the highest-sensitivity classification present. An action tagged PII + FINANCIAL is evaluated against both Data Privacy and Financial Compliance constraints. Multiple tags may apply to a single action.
+
+### Decision Summary for External Disclosure (Added 2026-03-15)
+
+When a governed action produces a consequential decision affecting an individual — employment decisions, lending determinations, insurance underwriting, housing applications, or other actions within the Anti-Discrimination Constraint Category — the Decision Record must be capable of producing a Decision Summary for External Disclosure.
+
+The Decision Summary is a human-readable explanation of the decision that can be provided to the affected individual upon request. It includes: the action taken, the primary factors in the decision, the data sources consulted, and the mechanism by which the individual may contest the decision. The Summary is derived from the Decision Record's reasoning chain and Uncertainty Declaration but is formatted for non-technical comprehension.
+
+The Decision Summary does not expose proprietary algorithms, trade secrets, or internal governance configurations. It provides sufficient transparency for the affected individual to understand the decision and exercise their rights without revealing the system's internal architecture. This satisfies employment law notice requirements, consumer protection disclosure obligations, and the EU AI Act's right to explanation for high-risk AI decisions.
+
+Decision Records serve as legal authorization evidence. In an agency law context, the Decision Record documents the scope of delegated authority, the specific authorization for the action, and the constraints under which the agent operated. When a court asks whether a principal authorized an action taken by an autonomous agent, the Decision Record provides the evidentiary answer.
 
 ### External Decision Record Storage (Recommendation — Added 2026-02-23)
 
@@ -396,6 +576,8 @@ The positioning against existing governance and compliance tools: NIST, ISO, and
 - **Epistemic Honesty (Confirmed 2026-02-19):** Every Decision Record documents not only what was decided but what was uncertain at the time of decision. Structured Uncertainty Declarations capture assumptions, watch conditions, and known unknowns. The system maintains calibrated awareness of its own epistemic limitations. Governance that cannot express uncertainty about its own evaluations is governance that cannot improve.
 
 - **Separation of Creation and Validation (Added 2026-02-20):** In governed autonomous systems, the entity that produces an output must not be the sole entity that validates it for governance compliance. Validation of governed outputs requires an independent evaluation path — a different agent, a different process, or a human reviewer. The Iron Rule prevents the governed system from modifying its own governance. Separation of Creation and Validation prevents the governed system from certifying its own outputs. Both serve the same purpose — independence between the system being governed and the mechanisms that govern it. In practice: agents that produce outputs do not write their own validation criteria, validation processes operate on information the producing agent cannot access or modify, Decision Records for validated outputs identify the validating entity and its independence from the producer, and the governance pipeline distinguishes between self-reported quality metrics (useful but not sufficient) and independently validated quality evidence (required for governance authorization). This principle does not require human validation for every output. Automated independent validation is sufficient — the requirement is independence, not humanity. Independence is evaluated structurally (different agent, different process, different information access) rather than statistically.
+
+- **Proportional Governance (Added 2026-03-15):** Governance scales with risk, not uniformly. A scheduling agent and a lending agent do not carry the same governance burden because they do not carry the same legal and operational risk. The Applicability Profile mechanism ensures that each deployment is governed proportionally to what the agent actually does, the data it handles, the jurisdictions it operates in, and the consequences of its actions. This is not optional flexibility — it is a design requirement. Over-governance makes autonomous systems unusable. Under-governance makes them unsafe. Proportional governance achieves both deployability and trust by applying the right constraints to the right actions. Every major regulatory framework — the EU AI Act, NIST AI RMF, ISO 42001, Colorado AI Act — uses risk-based classification. Proportional Governance is GAP's structural implementation of this principle.
 
 - **Adversarial Integrity Verification (Recommendation — Added 2026-02-23):** *Non-normative.* GAP-compliant implementations should periodically subject the Governance Kernel's structural isolation to adversarial testing by an independent evaluation entity. The Iron Rule's structural enforcement — that governed agents cannot access governance infrastructure — is a critical security property. Verification that this property holds under adversarial conditions should not rely solely on design-time analysis. Recommended practice includes: red-team testing by agents specifically designed to discover paths to governance infrastructure, automated scanning for isolation boundary violations, and formal verification of process isolation mechanisms where feasible. Organizations seeking GAP certification (Phase 3 roadmap) should expect adversarial integrity verification as a certification requirement.
 
