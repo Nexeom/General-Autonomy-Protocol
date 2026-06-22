@@ -192,15 +192,24 @@ was written against (head of `claude/gap-kernel-implementation-25Zt0`, 2026-06-2
   recomputable SHA-256); `verify_chain_integrity` verifies signatures + chain.
   Tamper tests added (`tests/test_lineage.py`): mutated field, recompute-the-hash
   forgery, broken chain link even when re-signed, independent public-key verify.
-- ⏭️ **Next: Phase E (Fix 2 isolation)**, then **Phase F (Fix 6 GIM)**, then
-  **Phase G (SA-5 + Fix 7 conformance)**.
+- ✅ **Phase E (Fix 2) — landed.** Every decision is kernel-Ed25519-signed; the
+  Execution Fabric refuses unsigned/forged/tampered/wrong-kernel decisions
+  (`canonical_decision_payload` excludes the downstream OOB fields). Process
+  isolation remains a deployment topology — the signing boundary means the
+  execution layer needs only the kernel public key. `tests/test_decision_integrity.py`.
+- ✅ **Phase F (Fix 6) — landed.** Independent rule-based GIM
+  (`governance/integrity_monitor.py`): GIM-1 authorization drift + GIM-3
+  threshold-avoidance decomposition. `tests/test_gim.py`. GIM-2/4/5 + a
+  separate-model classifier remain Normative/Planned.
+- ✅ **Phase H (Fix 4 supply side) — landed.** CGA loop gates L2+ to
+  `awaiting_approval` (no auto-execute); `approve_and_execute` attaches a human
+  OOB signature obtained off-channel. `tests/test_approval_gating.py`.
+- ✅ **Phase G (SA-5 + Fix 7) — landed.** Adversarial test that CGA cannot
+  negotiate around a hard constraint (`tests/test_adversarial.py`); living
+  **`docs/CONFORMANCE.md`** matrix (normative vs. implemented & verified), linked
+  from README + spec.
 
-### Phase H — L2+ approval gating & human-in-the-loop wiring (added 2026-06-22)
-
-Surfaced while building Phase B: the CGA loop (`strategy/cga_loop.py:316`)
-auto-executes any APPROVED decision, including L2+, without first *obtaining* the
-OOB approval that L2+ now requires. Today this fails closed (the fabric rejects
-an unsigned L2+ decision), but ungracefully. This phase is the *supply side* of
-Fix 4 — route L2+ approvals to a pending-approval queue, collect the human
-signature over an agent-independent channel, and re-submit for execution. Pairs
-with **G-4 human oversight**; tackle alongside Phase F/G.
+**Status: Fixes 1–6 built and verified; Phases A–H complete.** Remaining as
+explicitly-marked Normative/Planned (see CONFORMANCE.md): out-of-process kernel
+isolation (Fix 2 deployment topology), GIM-2/4/5 + separate-model classifier,
+Reconciler Tiers 1–3, and SIR.

@@ -46,6 +46,10 @@ The **General Autonomy Protocol** defines the minimum behavioral and architectur
 > mechanisms, authorization tiers L0–L4, RGAP, technical implementation,
 > roadmap, design principles) — lives in
 > **[docs/PROTOCOL_SPECIFICATION.md](docs/PROTOCOL_SPECIFICATION.md)**.
+>
+> 🔎 **What's actually built and verified** vs. specified as a normative
+> requirement: see the
+> **[Conformance & Maturity Statement](docs/CONFORMANCE.md)**.
 
 GAP operates through three structurally distinct layers:
 

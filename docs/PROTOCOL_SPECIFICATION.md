@@ -11,6 +11,14 @@
 
 **Nexeom** — February 2026
 
+> ⚠️ **Normative vs. implemented.** This document is the *normative standard* —
+> it states what a GAP-compliant system MUST do, often in absolute terms
+> ("cannot", "immutable", "structurally"). For what the reference implementation
+> actually enforces and verifies today, see the
+> **[Conformance & Maturity Statement](CONFORMANCE.md)**. Treat unqualified
+> structural language here as a requirement on conformant implementations, not a
+> claim that every deployment already meets it.
+
 ---
 
 ## 1. Executive Summary
