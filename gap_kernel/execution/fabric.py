@@ -11,9 +11,10 @@ Behavioral Contract:
 - Handles execution-level retries (e.g., API timeout), not strategy-level retries
 """
 
+import json
+import time
 from datetime import datetime
 from typing import Callable, Dict, Optional
-import time
 
 from gap_kernel.crypto.signing import PublicKeyRegistry, verify as verify_signature
 from gap_kernel.models.execution import ExecutionResult
@@ -32,6 +33,15 @@ _OOB_REQUIRED_LEVELS = {
     AuthorizationLevel.L2,
     AuthorizationLevel.L3,
     AuthorizationLevel.L4,
+}
+
+# Ordinal rank for authorization levels (for per-approver ceiling comparison).
+_AUTH_RANK = {
+    AuthorizationLevel.L0: 0,
+    AuthorizationLevel.L1: 1,
+    AuthorizationLevel.L2: 2,
+    AuthorizationLevel.L3: 3,
+    AuthorizationLevel.L4: 4,
 }
 
 
@@ -74,6 +84,8 @@ class ExecutionFabric:
         oob_ledger: Optional[OOBLedger] = None,
         public_key_registry: Optional[PublicKeyRegistry] = None,
         kernel_public_key_hex: Optional[str] = None,
+        allow_unsigned_decisions: bool = False,
+        approver_max_levels: Optional[Dict[str, AuthorizationLevel]] = None,
     ):
         self.world_model = world_model
         self._executors: Dict[str, Callable] = {}
@@ -83,11 +95,18 @@ class ExecutionFabric:
         self._public_key_registry = (
             public_key_registry if public_key_registry is not None else PublicKeyRegistry()
         )
-        # Kernel public key (Fix 2). When set, the fabric verifies that every
-        # decision was signed by the trusted Governance Kernel before executing,
-        # so a forged or altered decision cannot drive execution. When unset
-        # (open prototype default), signature verification is disabled.
+        # Kernel public key (Fix 2) — the fabric verifies that every decision was
+        # signed by the trusted Governance Kernel before executing. Fail closed
+        # by default: if no key is configured the fabric REFUSES to execute,
+        # unless `allow_unsigned_decisions=True` is passed as an explicit prototype
+        # escape hatch. An unverifiable decision is never trusted by omission.
         self._kernel_public_key_hex = kernel_public_key_hex
+        self._allow_unsigned_decisions = allow_unsigned_decisions
+        # Optional per-approver authority ceiling (Fix 4): the maximum
+        # AuthorizationLevel each approver key id may release. When provided, an
+        # approver may not authorize above their ceiling, and an approver absent
+        # from the map cannot authorize at all (fail closed).
+        self._approver_max_levels = approver_max_levels
         self._register_default_executors()
 
     def execute(
@@ -98,10 +117,20 @@ class ExecutionFabric:
         """
         Execute an approved strategy proposal.
 
+        GUARD: The decision must authorize THIS proposal.
         GUARD: The decision must be signed by the trusted Governance Kernel.
         GUARD: Never execute without governance approval.
         GUARD: L2+ requires Out-of-Band Authority Verification.
         """
+        # Bind execution to the evaluated proposal (Fix 2): a decision authorizes
+        # the specific proposal it was rendered for. Executing a different payload
+        # under someone else's approval is a confused-deputy attack.
+        if proposal.id != governance_decision.proposal_id:
+            raise ExecutionError(
+                f"Decision {governance_decision.id} authorizes proposal "
+                f"'{governance_decision.proposal_id}', not '{proposal.id}'."
+            )
+
         # Structural boundary (Fix 2): trust only decisions the kernel signed.
         self._verify_decision_signature(governance_decision)
 
@@ -112,7 +141,9 @@ class ExecutionFabric:
                 f"not approved."
             )
 
-        # OOB Authority Verification for L2+ authorization gates
+        # OOB Authority Verification for L2+ authorization gates (verify only —
+        # the approval is consumed after a successful dispatch, below, so a
+        # transient execution failure does not burn a valid human approval).
         self._verify_oob_authority(governance_decision)
 
         start_time = time.monotonic()
@@ -131,26 +162,58 @@ class ExecutionFabric:
                 failed.append(result)
 
         elapsed = time.monotonic() - start_time
+        success = len(failed) == 0
+
+        # Consume the OOB authorization only after a successful dispatch, so a
+        # transient execution failure leaves a valid human approval usable for a
+        # legitimate retry rather than permanently burning it.
+        if success:
+            self._consume_oob_authority(governance_decision)
 
         return ExecutionResult(
             proposal_id=proposal.id,
             actions_completed=completed,
             actions_failed=failed,
-            success=len(failed) == 0,
+            success=success,
             world_state_changes=state_changes,
             executed_at=datetime.utcnow(),
             execution_duration_seconds=round(elapsed, 3),
         )
 
+    def _consume_oob_authority(self, decision: GovernanceDecision) -> None:
+        """Record-use an L2+ OOB authorization in the persistent replay ledger."""
+        if decision.authorization_level not in _OOB_REQUIRED_LEVELS:
+            return
+        if not decision.human_approval_signature:
+            return
+        try:
+            self._oob_ledger.record_use(
+                decision.id,
+                decision.human_approval_signature,
+                decision.human_approver_public_key_id or "",
+            )
+        except ReplayError as exc:
+            raise OOBVerificationError(
+                f"Decision {decision.id} OOB authorization has already been used "
+                f"(non-replayable)."
+            ) from exc
+
     def _verify_decision_signature(self, decision: GovernanceDecision) -> None:
         """Verify the decision was signed by the trusted Governance Kernel (Fix 2).
 
-        No-op when no kernel public key is configured (open prototype). When one
-        is configured, an unsigned or invalidly-signed decision is refused — an
-        in-process agent cannot forge an approval without the kernel's key.
+        Fail closed: with no kernel public key configured, execution is refused
+        unless the fabric was constructed with `allow_unsigned_decisions=True`
+        (an explicit prototype escape hatch). An unverifiable decision is never
+        trusted by omission.
         """
         if self._kernel_public_key_hex is None:
-            return
+            if self._allow_unsigned_decisions:
+                return
+            raise ExecutionError(
+                f"Decision {decision.id} cannot be verified: no Governance Kernel "
+                f"public key is configured. Refusing to execute an unverifiable "
+                f"decision (pass allow_unsigned_decisions=True only for prototypes)."
+            )
         if not decision.decision_signature:
             raise ExecutionError(
                 f"Decision {decision.id} is unsigned; refusing to execute "
@@ -170,16 +233,29 @@ class ExecutionFabric:
     def _oob_signed_message(decision: GovernanceDecision) -> str:
         """The canonical message a human approver signs.
 
-        Binds the approval to this specific Decision Record ID *and* its expiry,
-        so neither the decision nor the validity window can be swapped under a
-        captured signature.
+        A delimiter-safe JSON object binding the approval to this specific
+        decision, the proposal it authorizes, the authorization level, the
+        approver key id, and the expiry — so a captured signature is not
+        transferable to a different decision, proposal, level, or approver.
         """
-        valid_until = (
-            decision.human_approval_valid_until.isoformat()
-            if decision.human_approval_valid_until
-            else ""
+        return json.dumps(
+            {
+                "decision_id": decision.id,
+                "proposal_id": decision.proposal_id,
+                "authorization_level": (
+                    decision.authorization_level.value
+                    if decision.authorization_level
+                    else None
+                ),
+                "approver_key_id": decision.human_approver_public_key_id,
+                "valid_until": (
+                    decision.human_approval_valid_until.isoformat()
+                    if decision.human_approval_valid_until
+                    else None
+                ),
+            },
+            sort_keys=True,
         )
-        return f"{decision.id}:{valid_until}"
 
     def _verify_oob_authority(self, decision: GovernanceDecision) -> None:
         """
@@ -190,10 +266,13 @@ class ExecutionFabric:
         order (fail closed at every step):
         1. a signature and approver key id are present;
         2. the approval has not expired (freshness);
-        3. the approver's public key is registered (known authority);
-        4. the signature cryptographically verifies over the decision id+expiry;
+        3. the approver's public key is registered (known authority), and the
+           approver is permitted to authorize at this level (per-key ceiling);
+        4. the signature cryptographically verifies over the canonical message
+           (decision id, proposal, level, approver, expiry);
         5. the authorization has not already been consumed (persistent replay
-           protection, enforced even across a restarted Execution Fabric).
+           protection). The approval is *consumed* only after a successful
+           dispatch (see _consume_oob_authority).
         """
         if decision.authorization_level not in _OOB_REQUIRED_LEVELS:
             return  # L0 and L1 do not require OOB verification
@@ -228,7 +307,26 @@ class ExecutionFabric:
                 f"'{decision.human_approver_public_key_id}' is not registered."
             )
 
-        # 4. Cryptographically verify the signature over THIS decision's id+expiry.
+        # 3b. Per-key authority ceiling — an approver may not release an action
+        #     above their permitted level (tier-commensurate identity assurance).
+        if self._approver_max_levels is not None:
+            max_level = self._approver_max_levels.get(
+                decision.human_approver_public_key_id
+            )
+            if max_level is None:
+                raise OOBVerificationError(
+                    f"Decision {decision.id} approver "
+                    f"'{decision.human_approver_public_key_id}' has no authority ceiling."
+                )
+            if _AUTH_RANK[decision.authorization_level] > _AUTH_RANK[max_level]:
+                raise OOBVerificationError(
+                    f"Decision {decision.id} at {decision.authorization_level.value} "
+                    f"exceeds approver '{decision.human_approver_public_key_id}' "
+                    f"ceiling of {max_level.value}."
+                )
+
+        # 4. Cryptographically verify the signature over the canonical message
+        #    (binds decision id, proposal, level, approver, and expiry).
         if not verify_signature(
             public_key_hex,
             self._oob_signed_message(decision),
@@ -238,19 +336,15 @@ class ExecutionFabric:
                 f"Decision {decision.id} OOB approval signature is invalid."
             )
 
-        # 5. Non-replayability — consume the authorization in the persistent
-        #    ledger. A reused (decision_id, signature) pair is rejected.
-        try:
-            self._oob_ledger.record_use(
-                decision.id,
-                decision.human_approval_signature,
-                decision.human_approver_public_key_id,
-            )
-        except ReplayError as exc:
+        # 5. Non-replayability — reject an already-consumed approval. Actual
+        #    consumption happens after a successful dispatch (consume-on-success).
+        if self._oob_ledger.has_been_used(
+            decision.id, decision.human_approval_signature
+        ):
             raise OOBVerificationError(
                 f"Decision {decision.id} OOB authorization has already been used "
                 f"(non-replayable)."
-            ) from exc
+            )
 
     def _dispatch_action(self, action: PlannedAction) -> dict:
         """Dispatch a single action to its registered executor."""

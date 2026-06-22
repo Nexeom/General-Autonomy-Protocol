@@ -406,7 +406,10 @@ class TestStructuredUncertainty:
     def test_uncertainty_propagates_to_lineage(self):
         """Uncertainty flows from governance decision into lineage record."""
         kernel = GovernanceKernel()
-        fabric = ExecutionFabric(WorldModel(entities={}, last_reconciled=datetime.utcnow()))
+        fabric = ExecutionFabric(
+            WorldModel(entities={}, last_reconciled=datetime.utcnow()),
+            kernel_public_key_hex=kernel.public_key_hex,
+        )
         cga = CGALoop(
             governance_kernel=kernel,
             execution_fabric=fabric,

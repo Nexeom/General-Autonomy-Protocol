@@ -45,7 +45,9 @@ class TestCRMScenarioE2E:
         self.governance = GovernanceKernel()
         self.lineage_store = LineageStore(db_path=":memory:")
         self.learning = LearningEngine()
-        self.execution = ExecutionFabric(self.world_store.model)
+        self.execution = ExecutionFabric(
+            self.world_store.model, kernel_public_key_hex=self.governance.public_key_hex
+        )
         self.config = ReconcilerConfig(
             cooldown_seconds=0,  # Disable for test
             max_retry_budget=3,

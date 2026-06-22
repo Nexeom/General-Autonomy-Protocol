@@ -173,6 +173,29 @@ def test_authorization_comparator_rank_based():
     assert _max_auth(AuthorizationLevel.L4, AuthorizationLevel.L0) == AuthorizationLevel.L4
 
 
+def test_soft_floor_constraint_is_forced_hard():
+    """A regulatory-floor constraint declared SOFT must still be enforced (a SOFT
+    floor would silently fail to reject)."""
+    private_hex, public_hex = generate_keypair()
+    registry = PublicKeyRegistry({KEY_ID: public_hex})
+    profile = ApplicabilityProfile(
+        profile_id="prof_soft",
+        tier1_constraints=[
+            Constraint(name="cost_ceiling", type=ConstraintType.SOFT, description="Floor $5.00")
+        ],
+        issued_at=datetime(2026, 1, 1),
+    )
+    signed = sign_profile(profile, private_hex, KEY_ID)
+    kernel = GovernanceKernel(applicability_profile=signed, profile_key_registry=registry)
+    assert kernel._tier1_floor[0].type == ConstraintType.HARD
+    decision = kernel.evaluate_proposal(
+        proposal=_proposal(cost=10.0), intents=[_intent()], world_state=_world(),
+        action_type_id="task_execution",
+    )
+    assert decision.verdict == GovernanceVerdict.REJECTED
+    assert "cost_ceiling" in decision.violated_constraints
+
+
 def test_constraint_defaults_to_operational_tier():
     c = Constraint(name="x", type=ConstraintType.SOFT, description="d")
     assert c.tier == PolicyTier.OPERATIONAL

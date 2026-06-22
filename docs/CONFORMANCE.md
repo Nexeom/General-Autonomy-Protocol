@@ -48,3 +48,26 @@ backed by adversarial tests. The remaining items above are explicitly marked
 *Partial* or *Normative/Planned* so no deployer mistakes aspiration for
 assurance. The test suite is the live evidence; this matrix is updated as each
 phase lands.
+
+## Security review (June 2026)
+
+An adversarial review of this remediation code confirmed 14 defects, all since
+fixed and regression-tested:
+
+- decision-signature verification now **fails closed by default** (no kernel key
+  configured ⇒ execution refused, unless an explicit prototype opt-out is set);
+- execution is **bound to the approved proposal** (a decision authorizes its
+  specific proposal, defeating decision/proposal confusion);
+- the lineage chain detects **head / tail / whole-chain truncation** via a chain
+  anchor (count + genesis + tip), not just per-record/neighbour checks;
+- the **OOB approval binds** the decision, proposal, authorization level, and
+  approver key into the signed message, with an optional **per-approver authority
+  ceiling**; the approval is consumed only **after a successful dispatch**;
+- the Tier-1 floor is forced **HARD** (a SOFT floor cannot silently fail to
+  enforce); the cost-ceiling evaluator **fails closed** when its amount cannot be
+  parsed.
+
+Residual, honestly scoped: the lineage chain anchor lives in the same SQLite as
+the records (production anchors it in external/WORM storage); the per-approver
+authority ceiling and the kernel-key wiring are deployment configuration; GIM-2 /
+GIM-4 / GIM-5 and a separate-model classifier remain Normative / Planned.

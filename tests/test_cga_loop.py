@@ -97,7 +97,7 @@ class TestCGALoop:
         world = _make_eu_lead_world(consent=False)
         intent = _make_sla_intent()
         governance = GovernanceKernel()
-        execution = ExecutionFabric(world)
+        execution = ExecutionFabric(world, kernel_public_key_hex=governance.public_key_hex)
 
         cga = CGALoop(
             governance_kernel=governance,
@@ -148,7 +148,7 @@ class TestCGALoop:
         world = _make_eu_lead_world(consent=True)
         intent = _make_sla_intent()
         governance = GovernanceKernel()
-        execution = ExecutionFabric(world)
+        execution = ExecutionFabric(world, kernel_public_key_hex=governance.public_key_hex)
 
         cga = CGALoop(
             governance_kernel=governance,
@@ -211,7 +211,7 @@ class TestCGALoop:
         )
 
         governance = GovernanceKernel()
-        execution = ExecutionFabric(world)
+        execution = ExecutionFabric(world, kernel_public_key_hex=governance.public_key_hex)
 
         # Use max_attempts=2 so the human handoff isn't tried
         # (human handoff is attempt 3 in the default rule generator)
@@ -239,7 +239,7 @@ class TestCGALoop:
         world = _make_eu_lead_world(consent=False)
         intent = _make_sla_intent()
         governance = GovernanceKernel()
-        execution = ExecutionFabric(world)
+        execution = ExecutionFabric(world, kernel_public_key_hex=governance.public_key_hex)
 
         cga = CGALoop(
             governance_kernel=governance,
@@ -273,7 +273,7 @@ class TestCGALoop:
         world = _make_eu_lead_world(consent=False)
         intent = _make_sla_intent()
         governance = GovernanceKernel()
-        execution = ExecutionFabric(world)
+        execution = ExecutionFabric(world, kernel_public_key_hex=governance.public_key_hex)
 
         cga = CGALoop(
             governance_kernel=governance,

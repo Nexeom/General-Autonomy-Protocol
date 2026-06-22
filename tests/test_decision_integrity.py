@@ -97,12 +97,12 @@ def test_fabric_rejects_forged_signature():
 
 
 def test_fabric_rejects_tampered_decision():
-    """An agent altering a kernel-signed decision (e.g. to retarget it) is caught."""
+    """An agent altering a kernel-signed decision's content is caught."""
     kernel = GovernanceKernel()
     decision = kernel.evaluate_proposal(
         proposal=_proposal(), intents=[_intent()], world_state=_world()
     )
-    decision.proposal_id = "some_other_proposal"  # tamper after signing
+    decision.violated_constraints = ["tampered"]  # mutate a signed field after signing
     fabric = ExecutionFabric(_world(), kernel_public_key_hex=kernel.public_key_hex)
     with pytest.raises(ExecutionError, match="invalid|forgery"):
         fabric.execute(_proposal(), decision)
@@ -120,6 +120,28 @@ def test_decision_from_different_kernel_rejected():
         fabric.execute(_proposal(), decision)
 
 
+def test_default_fabric_refuses_unverifiable_decision():
+    """Fail closed by default: no kernel key and no explicit opt-out -> refuse."""
+    kernel = GovernanceKernel()
+    decision = kernel.evaluate_proposal(
+        proposal=_proposal(), intents=[_intent()], world_state=_world()
+    )
+    fabric = ExecutionFabric(_world())  # no key, no allow_unsigned_decisions
+    with pytest.raises(ExecutionError, match="no Governance Kernel public key|unverifiable"):
+        fabric.execute(_proposal(), decision)
+
+
+def test_fabric_binds_execution_to_the_approved_proposal():
+    """A decision authorizes its specific proposal; a different payload is refused."""
+    kernel = GovernanceKernel()
+    decision = kernel.evaluate_proposal(
+        proposal=_proposal(pid="prop_e"), intents=[_intent()], world_state=_world()
+    )
+    fabric = ExecutionFabric(_world(), kernel_public_key_hex=kernel.public_key_hex)
+    with pytest.raises(ExecutionError, match="authorizes proposal"):
+        fabric.execute(_proposal(pid="a_different_proposal"), decision)
+
+
 def test_kernel_signature_survives_downstream_oob_approval():
     """The kernel signature must still verify after the human approval fields are
     added downstream (they are excluded from the kernel's signed payload)."""
@@ -134,12 +156,12 @@ def test_kernel_signature_survives_downstream_oob_approval():
     # Human OOB approval, added AFTER the kernel signed.
     approver_priv, approver_pub = generate_keypair()
     valid_until = datetime.utcnow() + timedelta(minutes=5)
-    decision.human_approval_signature = sign(
-        approver_priv, f"{decision.id}:{valid_until.isoformat()}"
-    )
     decision.human_approver_public_key_id = "alice"
     decision.human_approval_timestamp = datetime.utcnow()
     decision.human_approval_valid_until = valid_until
+    decision.human_approval_signature = sign(
+        approver_priv, ExecutionFabric._oob_signed_message(decision)
+    )
 
     fabric = ExecutionFabric(
         _world(),

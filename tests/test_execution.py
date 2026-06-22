@@ -49,7 +49,7 @@ def _make_rejected_decision(proposal_id: str) -> GovernanceDecision:
 class TestExecutionFabric:
     def test_execute_approved_proposal(self):
         world = _make_world()
-        fabric = ExecutionFabric(world)
+        fabric = ExecutionFabric(world, allow_unsigned_decisions=True)
 
         proposal = StrategyProposal(
             id="prop_1",
@@ -80,7 +80,7 @@ class TestExecutionFabric:
     def test_reject_unapproved_execution(self):
         """The fabric must never execute without governance approval."""
         world = _make_world()
-        fabric = ExecutionFabric(world)
+        fabric = ExecutionFabric(world, allow_unsigned_decisions=True)
 
         proposal = StrategyProposal(
             id="prop_2",
@@ -107,7 +107,7 @@ class TestExecutionFabric:
 
     def test_execute_multiple_actions(self):
         world = _make_world()
-        fabric = ExecutionFabric(world)
+        fabric = ExecutionFabric(world, allow_unsigned_decisions=True)
 
         proposal = StrategyProposal(
             id="prop_3",
@@ -141,7 +141,7 @@ class TestExecutionFabric:
 
     def test_unknown_action_type_fails(self):
         world = _make_world()
-        fabric = ExecutionFabric(world)
+        fabric = ExecutionFabric(world, allow_unsigned_decisions=True)
 
         proposal = StrategyProposal(
             id="prop_4",
@@ -169,7 +169,7 @@ class TestExecutionFabric:
 
     def test_world_state_updated_after_execution(self):
         world = _make_world()
-        fabric = ExecutionFabric(world)
+        fabric = ExecutionFabric(world, allow_unsigned_decisions=True)
 
         proposal = StrategyProposal(
             id="prop_5",
