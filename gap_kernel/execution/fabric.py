@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Callable, Dict, Optional
 import time
 
+from gap_kernel.crypto.signing import PublicKeyRegistry, verify as verify_signature
 from gap_kernel.models.execution import ExecutionResult
 from gap_kernel.models.governance import (
     AuthorizationLevel,
@@ -23,6 +24,7 @@ from gap_kernel.models.governance import (
 )
 from gap_kernel.models.strategy import PlannedAction, StrategyProposal
 from gap_kernel.models.world import WorldModel
+from gap_kernel.verification.oob_ledger import OOBLedger, ReplayError
 
 # Authorization levels that require OOB verification
 _OOB_REQUIRED_LEVELS = {
@@ -65,10 +67,20 @@ class ExecutionFabric:
         """Register a custom executor for an action type."""
         self._executors[action_type] = executor
 
-    def __init__(self, world_model: WorldModel):
+    def __init__(
+        self,
+        world_model: WorldModel,
+        oob_ledger: Optional[OOBLedger] = None,
+        public_key_registry: Optional[PublicKeyRegistry] = None,
+    ):
         self.world_model = world_model
         self._executors: Dict[str, Callable] = {}
-        self._used_verification_tokens: set = set()
+        # Persistent replay protection + approver-key trust boundary for OOB.
+        # Defaults are process-local; production injects shared, durable stores.
+        self._oob_ledger = oob_ledger if oob_ledger is not None else OOBLedger()
+        self._public_key_registry = (
+            public_key_registry if public_key_registry is not None else PublicKeyRegistry()
+        )
         self._register_default_executors()
 
     def execute(
@@ -119,42 +131,91 @@ class ExecutionFabric:
             execution_duration_seconds=round(elapsed, 3),
         )
 
+    @staticmethod
+    def _oob_signed_message(decision: GovernanceDecision) -> str:
+        """The canonical message a human approver signs.
+
+        Binds the approval to this specific Decision Record ID *and* its expiry,
+        so neither the decision nor the validity window can be swapped under a
+        captured signature.
+        """
+        valid_until = (
+            decision.human_approval_valid_until.isoformat()
+            if decision.human_approval_valid_until
+            else ""
+        )
+        return f"{decision.id}:{valid_until}"
+
     def _verify_oob_authority(self, decision: GovernanceDecision) -> None:
         """
-        Out-of-Band Authority Verification for L2+ authorization gates.
+        Out-of-Band Authority Verification for L2+ authorization gates (Fix 4).
 
-        For L2 and above, verifies:
-        1. verification_method is provided
-        2. verification channel is independent of agent communication
-        3. Non-replayability (authorization bound to specific Decision Record ID)
+        For L2 and above, the human approver must have signed this specific
+        Decision Record ID over an agent-independent channel. This verifies, in
+        order (fail closed at every step):
+        1. a signature and approver key id are present;
+        2. the approval has not expired (freshness);
+        3. the approver's public key is registered (known authority);
+        4. the signature cryptographically verifies over the decision id+expiry;
+        5. the authorization has not already been consumed (persistent replay
+           protection, enforced even across a restarted Execution Fabric).
         """
         if decision.authorization_level not in _OOB_REQUIRED_LEVELS:
             return  # L0 and L1 do not require OOB verification
 
-        # 1. Check that verification_method is provided
-        if not decision.authority_verification_method:
+        # 1. Required cryptographic fields must be present.
+        if not decision.human_approval_signature or not decision.human_approver_public_key_id:
             raise OOBVerificationError(
                 f"Decision {decision.id} requires Out-of-Band Authority Verification "
-                f"at authorization level {decision.authorization_level.value}. "
-                f"No verification_method provided."
+                f"at {decision.authorization_level.value}: a human approval signature "
+                f"and approver key id are required."
+            )
+        if not decision.human_approval_valid_until:
+            raise OOBVerificationError(
+                f"Decision {decision.id} OOB approval is missing an expiry "
+                f"(human_approval_valid_until)."
             )
 
-        # 2. Validate that the verification channel is independent
-        if not decision.authority_verification_channel:
+        # 2. Freshness — the approval must not be expired.
+        if datetime.utcnow() > decision.human_approval_valid_until:
             raise OOBVerificationError(
-                f"Decision {decision.id} requires an independent verification channel "
-                f"at authorization level {decision.authorization_level.value}. "
-                f"No verification_channel provided."
+                f"Decision {decision.id} OOB approval expired at "
+                f"{decision.human_approval_valid_until.isoformat()}."
             )
 
-        # 3. Non-replayability: authorization bound to specific Decision Record ID
-        verification_token = f"{decision.id}:{decision.authority_verification_method}"
-        if verification_token in self._used_verification_tokens:
+        # 3. Resolve the approver's public key. An unknown key id fails closed.
+        public_key_hex = self._public_key_registry.get(
+            decision.human_approver_public_key_id
+        )
+        if not public_key_hex:
             raise OOBVerificationError(
-                f"Decision {decision.id} verification has already been used. "
-                f"Authorization signals are non-replayable."
+                f"Decision {decision.id} OOB approver key "
+                f"'{decision.human_approver_public_key_id}' is not registered."
             )
-        self._used_verification_tokens.add(verification_token)
+
+        # 4. Cryptographically verify the signature over THIS decision's id+expiry.
+        if not verify_signature(
+            public_key_hex,
+            self._oob_signed_message(decision),
+            decision.human_approval_signature,
+        ):
+            raise OOBVerificationError(
+                f"Decision {decision.id} OOB approval signature is invalid."
+            )
+
+        # 5. Non-replayability — consume the authorization in the persistent
+        #    ledger. A reused (decision_id, signature) pair is rejected.
+        try:
+            self._oob_ledger.record_use(
+                decision.id,
+                decision.human_approval_signature,
+                decision.human_approver_public_key_id,
+            )
+        except ReplayError as exc:
+            raise OOBVerificationError(
+                f"Decision {decision.id} OOB authorization has already been used "
+                f"(non-replayable)."
+            ) from exc
 
     def _dispatch_action(self, action: PlannedAction) -> dict:
         """Dispatch a single action to its registered executor."""

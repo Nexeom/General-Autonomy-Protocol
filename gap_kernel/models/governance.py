@@ -110,7 +110,19 @@ class GovernanceDecision(BaseModel):
     escalated_authorization_level: Optional[str] = None
     escalation_evidence: Optional[dict] = None
 
-    # Out-of-Band Authority Verification fields (Added 2026-02-23)
+    # Out-of-Band Authority Verification fields (Added 2026-02-23).
+    # Descriptive metadata about how a human approved (method/channel). Retained
+    # for the Decision Record; no longer the enforcement mechanism — see below.
     authority_verification_method: Optional[str] = None  # e.g., "hardware_key", "oob_code", "biometric"
     authority_verification_channel: Optional[str] = None  # e.g., "independent_mfa", "physical_token"
     authority_verified_at: Optional[datetime] = None
+
+    # Cryptographic OOB approval (Fix 4 — Added 2026-06-22). For L2+ actions the
+    # human approver signs this specific Decision Record ID (and its expiry) over
+    # an agent-independent channel; the Execution Fabric verifies the signature
+    # against a registered public key and consumes it in a persistent replay
+    # ledger. This is the enforced control, replacing the prior string checks.
+    human_approval_signature: Optional[str] = None       # hex Ed25519 signature over id+expiry
+    human_approver_public_key_id: Optional[str] = None   # key id resolved via PublicKeyRegistry
+    human_approval_timestamp: Optional[datetime] = None
+    human_approval_valid_until: Optional[datetime] = None

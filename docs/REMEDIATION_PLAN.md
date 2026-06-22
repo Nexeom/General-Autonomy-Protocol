@@ -164,7 +164,29 @@ continuous.
 
 ## Status
 
-This is a **planning artifact**. No kernel code has been modified to produce it.
-Building the phases is a separate, explicitly-authorized step. The current state
-table above reflects the head of `claude/gap-kernel-implementation-25Zt0` as of
-2026-06-22.
+The "current state" table above reflects the pre-remediation baseline this plan
+was written against (head of `claude/gap-kernel-implementation-25Zt0`, 2026-06-22).
+
+### Progress
+
+- ✅ **Phase A (Fix 1) — landed.** Constraint evaluation fails closed (unknown
+  HARD → reject, unknown SOFT → non-blocking); `strict_action_typing` kernel flag
+  rejects missing/unregistered `action_type_id` (default off until Phase C's
+  profile flips it on); API forwards `action_type_id`. Tests: `tests/test_fail_closed.py`.
+- ✅ **Phase B (Fix 4) — landed.** Ed25519 cryptographic substrate
+  (`gap_kernel/crypto/signing.py`, `PublicKeyRegistry`) + persistent append-only
+  replay ledger (`gap_kernel/verification/oob_ledger.py`). The Execution Fabric
+  now verifies a human approval **signature** over the Decision Record id+expiry
+  against a registered key and consumes it in the ledger, replacing the prior
+  string-presence checks. Tests: `tests/test_oob_verification.py` (incl. forged
+  signature, tampered expiry, unknown key, expired, replay across a fresh fabric).
+- ⏭️ **Next: Phase C (Fix 3)** and **Phase D (Fix 5)** can proceed in parallel —
+  both build on the Phase B crypto substrate.
+
+Known follow-ups surfaced during the build (out of scope for A/B):
+- The CGA loop (`strategy/cga_loop.py:316`) auto-executes any APPROVED decision,
+  including L2+, without first obtaining the OOB approval that L2+ now requires —
+  the human-in-the-loop wiring that *supplies* the signature belongs with the
+  approval flow, not the verifier built here.
+- A malformed cron string silently makes a constraint inactive
+  (`governance/kernel.py` `_is_constraint_active`) — a minor residual fail-open.
