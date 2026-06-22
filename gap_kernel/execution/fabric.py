@@ -21,6 +21,7 @@ from gap_kernel.models.governance import (
     AuthorizationLevel,
     GovernanceDecision,
     GovernanceVerdict,
+    canonical_decision_payload,
 )
 from gap_kernel.models.strategy import PlannedAction, StrategyProposal
 from gap_kernel.models.world import WorldModel
@@ -72,6 +73,7 @@ class ExecutionFabric:
         world_model: WorldModel,
         oob_ledger: Optional[OOBLedger] = None,
         public_key_registry: Optional[PublicKeyRegistry] = None,
+        kernel_public_key_hex: Optional[str] = None,
     ):
         self.world_model = world_model
         self._executors: Dict[str, Callable] = {}
@@ -81,6 +83,11 @@ class ExecutionFabric:
         self._public_key_registry = (
             public_key_registry if public_key_registry is not None else PublicKeyRegistry()
         )
+        # Kernel public key (Fix 2). When set, the fabric verifies that every
+        # decision was signed by the trusted Governance Kernel before executing,
+        # so a forged or altered decision cannot drive execution. When unset
+        # (open prototype default), signature verification is disabled.
+        self._kernel_public_key_hex = kernel_public_key_hex
         self._register_default_executors()
 
     def execute(
@@ -91,9 +98,13 @@ class ExecutionFabric:
         """
         Execute an approved strategy proposal.
 
+        GUARD: The decision must be signed by the trusted Governance Kernel.
         GUARD: Never execute without governance approval.
         GUARD: L2+ requires Out-of-Band Authority Verification.
         """
+        # Structural boundary (Fix 2): trust only decisions the kernel signed.
+        self._verify_decision_signature(governance_decision)
+
         if governance_decision.verdict != GovernanceVerdict.APPROVED:
             raise ExecutionError(
                 f"Cannot execute proposal {proposal.id}: "
@@ -130,6 +141,30 @@ class ExecutionFabric:
             executed_at=datetime.utcnow(),
             execution_duration_seconds=round(elapsed, 3),
         )
+
+    def _verify_decision_signature(self, decision: GovernanceDecision) -> None:
+        """Verify the decision was signed by the trusted Governance Kernel (Fix 2).
+
+        No-op when no kernel public key is configured (open prototype). When one
+        is configured, an unsigned or invalidly-signed decision is refused — an
+        in-process agent cannot forge an approval without the kernel's key.
+        """
+        if self._kernel_public_key_hex is None:
+            return
+        if not decision.decision_signature:
+            raise ExecutionError(
+                f"Decision {decision.id} is unsigned; refusing to execute "
+                f"(a valid Governance Kernel signature is required)."
+            )
+        if not verify_signature(
+            self._kernel_public_key_hex,
+            canonical_decision_payload(decision),
+            decision.decision_signature,
+        ):
+            raise ExecutionError(
+                f"Decision {decision.id} signature is invalid — it was not "
+                f"produced by the trusted Governance Kernel (possible forgery)."
+            )
 
     @staticmethod
     def _oob_signed_message(decision: GovernanceDecision) -> str:

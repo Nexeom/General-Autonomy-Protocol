@@ -22,7 +22,7 @@ from uuid import uuid4
 
 from croniter import croniter
 
-from gap_kernel.crypto.signing import PublicKeyRegistry
+from gap_kernel.crypto.signing import PublicKeyRegistry, generate_keypair, sign
 from gap_kernel.governance.dynamic_risk import (
     DynamicRiskEngine,
     EscalationConfig,
@@ -37,6 +37,7 @@ from gap_kernel.models.governance import (
     PhaseConfig,
     RiskProfile,
     UncertaintyDeclaration,
+    canonical_decision_payload,
 )
 from gap_kernel.models.intent import (
     Constraint,
@@ -491,11 +492,24 @@ class GovernanceKernel:
         strict_action_typing: bool = False,
         applicability_profile: Optional[ApplicabilityProfile] = None,
         profile_key_registry: Optional[PublicKeyRegistry] = None,
+        signing_key_hex: Optional[str] = None,
+        public_key_hex: Optional[str] = None,
+        kernel_key_id: str = "governance_kernel",
     ):
         self._action_type_registry: Dict[str, ActionTypeSpec] = dict(_BASELINE_ACTION_TYPES)
         self._dynamic_risk_engine = DynamicRiskEngine(
             escalation_config or EscalationConfig()
         )
+        # Kernel signing key (Fix 2). Every decision is signed so the Execution
+        # Fabric can verify it was produced by the kernel and not forged by an
+        # in-process agent. Generated per-kernel by default; production injects a
+        # managed key and shares only the public key with the execution layer.
+        if signing_key_hex and public_key_hex:
+            self._signing_key_hex = signing_key_hex
+            self._public_key_hex = public_key_hex
+        else:
+            self._signing_key_hex, self._public_key_hex = generate_keypair()
+        self._kernel_key_id = kernel_key_id
         # Fail-closed action typing (SA-2 / Fix 1). When True, every proposal
         # must declare a registered action_type_id or it is rejected — closing
         # the bypass where omitting the field skipped the Action Type Registry
@@ -637,7 +651,38 @@ class GovernanceKernel:
 
     # --- Core Evaluation ---
 
+    @property
+    def public_key_hex(self) -> str:
+        """The kernel's public key — the Execution Fabric verifies decisions with it."""
+        return self._public_key_hex
+
+    def _sign_decision(self, decision: GovernanceDecision) -> GovernanceDecision:
+        """Sign a decision with the kernel's private key (Fix 2)."""
+        decision.kernel_public_key_id = self._kernel_key_id
+        decision.decision_signature = sign(
+            self._signing_key_hex, canonical_decision_payload(decision)
+        )
+        return decision
+
     def evaluate_proposal(
+        self,
+        proposal: StrategyProposal,
+        intents: List[IntentVector],
+        world_state: WorldModel,
+        current_time: Optional[datetime] = None,
+        action_type_id: Optional[str] = None,
+    ) -> GovernanceDecision:
+        """Evaluate a proposal and cryptographically sign the resulting decision.
+
+        The signature lets the Execution Fabric confirm the decision came from
+        this kernel and was not forged or altered downstream.
+        """
+        decision = self._evaluate(
+            proposal, intents, world_state, current_time, action_type_id
+        )
+        return self._sign_decision(decision)
+
+    def _evaluate(
         self,
         proposal: StrategyProposal,
         intents: List[IntentVector],
