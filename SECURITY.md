@@ -6,7 +6,7 @@
   <p align="center">
     <a href="https://nexeom.ca/gap">Website</a> · 
     <a href="#what-is-general-autonomy">Manifesto</a> · 
-    <a href="docs/PROTOCOL_SPECIFICATION.md">Specification</a> · 
+    <a href="#architecture">Specification</a> · 
     <a href="CONTRIBUTING.md">Contributing</a>
   </p>
   <p align="center">
@@ -40,12 +40,6 @@ The **General Autonomy Protocol** defines the minimum behavioral and architectur
 - If rejection **triggers compliant re-planning** within governed bounds → **it's GAP**
 
 ## Architecture
-
-> 📖 **Full specification:** this README is the overview. The complete GAP
-> protocol specification — all 11 sections (three-layer architecture, core
-> mechanisms, authorization tiers L0–L4, RGAP, technical implementation,
-> roadmap, design principles) — lives in
-> **[docs/PROTOCOL_SPECIFICATION.md](docs/PROTOCOL_SPECIFICATION.md)**.
 
 GAP operates through three structurally distinct layers:
 
