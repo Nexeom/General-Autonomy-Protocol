@@ -56,6 +56,7 @@ class EntityIngestRequest(BaseModel):
 class EvaluateRequest(BaseModel):
     proposal: dict
     intent_ids: Optional[List[str]] = None
+    action_type_id: Optional[str] = None
 
 
 class ReconcilerTriggerResponse(BaseModel):
@@ -309,6 +310,7 @@ def create_app(
             proposal=proposal,
             intents=intents,
             world_state=ws.model,
+            action_type_id=req.action_type_id,
         )
         return decision.model_dump(mode="json")
 

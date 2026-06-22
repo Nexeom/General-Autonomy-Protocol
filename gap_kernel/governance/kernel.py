@@ -120,17 +120,18 @@ def _check_constraint_violation(
     Uses a rule-based evaluation engine that maps constraint names to
     concrete checks. This is the extensible policy evaluation core.
     """
-    violation_checks: Dict[str, callable] = {
-        "gdpr_consent_required": _check_gdpr_consent,
-        "no_contact_outside_hours": _check_contact_hours,
-        "cost_ceiling": _check_cost_ceiling,
-    }
-
-    check_fn = violation_checks.get(constraint.name)
+    check_fn = _CONSTRAINT_EVALUATORS.get(constraint.name)
     if check_fn:
         return check_fn(proposal, constraint, world_state)
 
-    return _generic_constraint_check(proposal, constraint, world_state)
+    # Fail-closed (SA-2 / Fix 1): a constraint with no registered evaluator
+    # cannot be certified as satisfied, so it is treated as a violation.
+    # (Previously this fell through to a generic check that returned False,
+    # silently passing every unrecognized constraint.) Callers gate this per
+    # type — an unevaluable HARD constraint rejects; an unevaluable SOFT
+    # constraint is a preference the kernel simply cannot score (see
+    # evaluate_proposal).
+    return True
 
 
 def _check_gdpr_consent(
@@ -194,13 +195,19 @@ def _check_cost_ceiling(
     return False
 
 
-def _generic_constraint_check(
-    proposal: StrategyProposal,
-    constraint: Constraint,
-    world_state: WorldModel,
-) -> bool:
-    """Generic check for constraints without specific rule implementations."""
-    return False
+# Registry of constraint-name -> concrete evaluator. A constraint whose name is
+# absent here has no concrete check; the kernel cannot prove it satisfied and so
+# fails closed (see _check_constraint_violation and evaluate_proposal).
+_CONSTRAINT_EVALUATORS: Dict[str, callable] = {
+    "gdpr_consent_required": _check_gdpr_consent,
+    "no_contact_outside_hours": _check_contact_hours,
+    "cost_ceiling": _check_cost_ceiling,
+}
+
+
+def _constraint_has_evaluator(constraint: Constraint) -> bool:
+    """True if a concrete evaluator is registered for this constraint name."""
+    return constraint.name in _CONSTRAINT_EVALUATORS
 
 
 # ---------------------------------------------------------------------------
@@ -453,11 +460,21 @@ class GovernanceKernel:
     - Separation of Creation and Validation enforcement
     """
 
-    def __init__(self, escalation_config: Optional[EscalationConfig] = None):
+    def __init__(
+        self,
+        escalation_config: Optional[EscalationConfig] = None,
+        strict_action_typing: bool = False,
+    ):
         self._action_type_registry: Dict[str, ActionTypeSpec] = dict(_BASELINE_ACTION_TYPES)
         self._dynamic_risk_engine = DynamicRiskEngine(
             escalation_config or EscalationConfig()
         )
+        # Fail-closed action typing (SA-2 / Fix 1). When True, every proposal
+        # must declare a registered action_type_id or it is rejected — closing
+        # the bypass where omitting the field skipped the Action Type Registry
+        # gate entirely. Defaults False to preserve open-deployment behavior;
+        # Phase C (Applicability Profiles) makes a loaded profile flip this on.
+        self._strict_action_typing = strict_action_typing
 
     # --- Action Type Registry ---
 
@@ -592,20 +609,43 @@ class GovernanceKernel:
 
         decision_id = f"gov_{uuid4().hex[:12]}"
 
-        # 0. Action Type Registry check — reject unregistered action types
-        if action_type_id and not self.validate_action_type(action_type_id):
+        # 0. Action Type Registry gate.
+        #    - A declared-but-unregistered action type is always rejected.
+        #    - Under strict action typing (fail-closed, SA-2 / Fix 1) a missing
+        #      action_type_id is also rejected, so the gate cannot be bypassed by
+        #      simply omitting the field.
+        if action_type_id is not None:
+            if not self.validate_action_type(action_type_id):
+                return GovernanceDecision(
+                    id=decision_id,
+                    proposal_id=proposal.id,
+                    verdict=GovernanceVerdict.REJECTED,
+                    violated_constraints=[],
+                    rejection_reason="unregistered_action_type",
+                    rejection_detail=(
+                        f"Action type '{action_type_id}' is not registered in the "
+                        f"Action Type Registry. The system cannot take actions "
+                        f"outside its registered governance configuration."
+                    ),
+                    action_type_id=action_type_id,
+                    temporal_context=_get_temporal_snapshot(current_time),
+                    policy_snapshot={},
+                    evaluated_at=current_time,
+                )
+        elif self._strict_action_typing:
             return GovernanceDecision(
                 id=decision_id,
                 proposal_id=proposal.id,
                 verdict=GovernanceVerdict.REJECTED,
                 violated_constraints=[],
-                rejection_reason="unregistered_action_type",
+                rejection_reason="action_type_required",
                 rejection_detail=(
-                    f"Action type '{action_type_id}' is not registered in the "
-                    f"Action Type Registry. The system cannot take actions "
-                    f"outside its registered governance configuration."
+                    "Strict action typing is enabled but this proposal declared "
+                    "no action_type_id. Every action must declare a registered "
+                    "action type; the Action Type Registry gate cannot be "
+                    "bypassed by omitting the field."
                 ),
-                action_type_id=action_type_id,
+                action_type_id=None,
                 temporal_context=_get_temporal_snapshot(current_time),
                 policy_snapshot={},
                 evaluated_at=current_time,
@@ -614,18 +654,24 @@ class GovernanceKernel:
         # 1. Resolve active constraints based on temporal context
         active_constraints = self._get_active_constraints(intents, current_time)
 
-        # 2. Check all hard constraints (any violation = reject)
+        # 2. Check all hard constraints (any violation = reject). Fail-closed:
+        #    a HARD constraint with no registered evaluator cannot be certified
+        #    satisfied, so _check_constraint_violation treats it as a violation.
         hard_violations = []
         for constraint in active_constraints:
             if constraint.type == ConstraintType.HARD:
                 if _check_constraint_violation(proposal, constraint, world_state):
                     hard_violations.append(constraint.name)
 
-        # 3. Check soft constraints (violations logged but not blocking)
+        # 3. Check soft constraints (violations logged but not blocking). A SOFT
+        #    constraint is a preference; one with no registered evaluator cannot
+        #    be scored, so it is skipped rather than flagged as violated.
         soft_violations = []
         for constraint in active_constraints:
             if constraint.type == ConstraintType.SOFT:
-                if _check_constraint_violation(proposal, constraint, world_state):
+                if _constraint_has_evaluator(constraint) and _check_constraint_violation(
+                    proposal, constraint, world_state
+                ):
                     soft_violations.append(constraint.name)
 
         # Build uncertainty declaration for every decision
