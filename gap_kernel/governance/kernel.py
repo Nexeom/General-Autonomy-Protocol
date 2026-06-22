@@ -22,10 +22,12 @@ from uuid import uuid4
 
 from croniter import croniter
 
+from gap_kernel.crypto.signing import PublicKeyRegistry
 from gap_kernel.governance.dynamic_risk import (
     DynamicRiskEngine,
     EscalationConfig,
 )
+from gap_kernel.governance.profile import ApplicabilityProfile, verify_profile
 from gap_kernel.models.governance import (
     ActionTypeSpec,
     AuthorizationLevel,
@@ -36,7 +38,13 @@ from gap_kernel.models.governance import (
     RiskProfile,
     UncertaintyDeclaration,
 )
-from gap_kernel.models.intent import Constraint, ConstraintType, IntentVector
+from gap_kernel.models.intent import (
+    Constraint,
+    ConstraintType,
+    IntentVector,
+    PolicyActivation,
+    PolicyTier,
+)
 from gap_kernel.models.strategy import StrategyProposal
 from gap_kernel.models.world import WorldModel
 
@@ -269,6 +277,25 @@ def _get_temporal_snapshot(current_time: datetime) -> dict:
 # Authorization Level Mapping (L0-L4)
 # ---------------------------------------------------------------------------
 
+_AUTH_RANK = {
+    AuthorizationLevel.L0: 0,
+    AuthorizationLevel.L1: 1,
+    AuthorizationLevel.L2: 2,
+    AuthorizationLevel.L3: 3,
+    AuthorizationLevel.L4: 4,
+}
+
+
+def _satisfies_auth(granted: AuthorizationLevel, required: AuthorizationLevel) -> bool:
+    """True if a granted authorization level meets or exceeds a required one."""
+    return _AUTH_RANK[granted] >= _AUTH_RANK[required]
+
+
+def _max_auth(a: AuthorizationLevel, b: AuthorizationLevel) -> AuthorizationLevel:
+    """Return the higher (more restrictive) of two authorization levels."""
+    return a if _AUTH_RANK[a] >= _AUTH_RANK[b] else b
+
+
 def _determine_auth_level(max_risk: int) -> AuthorizationLevel:
     """
     Graduated authorization model (L0-L4):
@@ -462,6 +489,8 @@ class GovernanceKernel:
         self,
         escalation_config: Optional[EscalationConfig] = None,
         strict_action_typing: bool = False,
+        applicability_profile: Optional[ApplicabilityProfile] = None,
+        profile_key_registry: Optional[PublicKeyRegistry] = None,
     ):
         self._action_type_registry: Dict[str, ActionTypeSpec] = dict(_BASELINE_ACTION_TYPES)
         self._dynamic_risk_engine = DynamicRiskEngine(
@@ -470,9 +499,29 @@ class GovernanceKernel:
         # Fail-closed action typing (SA-2 / Fix 1). When True, every proposal
         # must declare a registered action_type_id or it is rejected — closing
         # the bypass where omitting the field skipped the Action Type Registry
-        # gate entirely. Defaults False to preserve open-deployment behavior;
-        # Phase C (Applicability Profiles) makes a loaded profile flip this on.
-        self._strict_action_typing = strict_action_typing
+        # gate entirely. Defaults False to preserve open-deployment behavior; a
+        # loaded Applicability Profile flips this on (the floor is now declared).
+        self._strict_action_typing = strict_action_typing or applicability_profile is not None
+
+        # Tier-1 regulatory floor (Fix 3). Loaded from a SIGNED Applicability
+        # Profile and verified here; an unsigned/tampered/unknown-key profile is
+        # refused (fail closed). Floor constraints are normalized to Tier 1 and
+        # always-active, so no lower-tier configuration can weaken or suspend
+        # them — embodying the Tier 3 <= Tier 2 <= Tier 1 guarantee.
+        self._tier1_floor: List[Constraint] = []
+        if applicability_profile is not None:
+            verify_profile(
+                applicability_profile, profile_key_registry or PublicKeyRegistry()
+            )
+            self._tier1_floor = [
+                c.model_copy(
+                    update={
+                        "tier": PolicyTier.REGULATORY_FLOOR,
+                        "activation": PolicyActivation(always=True),
+                    }
+                )
+                for c in applicability_profile.tier1_constraints
+            ]
 
     # --- Action Type Registry ---
 
@@ -705,8 +754,10 @@ class GovernanceKernel:
         # Override with action type's default if specified and higher
         if action_type_id:
             action_spec = self._action_type_registry.get(action_type_id)
-            if action_spec and action_spec.default_authorization_level.value > auth_level.value:
-                auth_level = action_spec.default_authorization_level
+            if action_spec:
+                auth_level = _max_auth(
+                    auth_level, action_spec.default_authorization_level
+                )
 
         # 4a. Dynamic Risk Escalation — check for runtime behavioral signals
         escalation_triggered = False
@@ -857,8 +908,11 @@ class GovernanceKernel:
         intents: List[IntentVector],
         current_time: datetime,
     ) -> List[Constraint]:
-        """Collect all active constraints from active intents, filtered by temporal authority."""
-        active = []
+        """Collect all active constraints: the Tier-1 floor (always active) plus
+        active intents' constraints filtered by temporal authority."""
+        # Tier-1 regulatory floor is always active and cannot be suspended,
+        # narrowed, or scheduled off by any intent or lower-tier configuration.
+        active: List[Constraint] = list(self._tier1_floor)
         for intent in intents:
             if not intent.active:
                 continue

@@ -12,6 +12,19 @@ class ConstraintType(str, Enum):
     SOFT = "soft"   # Prefer to satisfy. Can be deprioritized with lineage record.
 
 
+class PolicyTier(int, Enum):
+    """Policy Tier Classification (Fix 3). Lower tiers may only add restrictions;
+    they can never weaken an upper tier. The ordering is Tier 3 <= Tier 2 <= Tier 1.
+
+    Tier 1 (regulatory floor) is loaded from a signed Applicability Profile the
+    runtime cannot mutate and is always active — it cannot be suspended, narrowed,
+    or scheduled off by configuration at any lower tier.
+    """
+    REGULATORY_FLOOR = 1   # Tier 1 — immutable legal/regulatory minimum
+    ORG_POLICY = 2         # Tier 2 — client policy, stricter than Tier 1 only
+    OPERATIONAL = 3        # Tier 3 — agent-tunable within Tier 1 and Tier 2
+
+
 class PolicyActivation(BaseModel):
     """Temporal authority — when this policy is active."""
 
@@ -28,6 +41,9 @@ class Constraint(BaseModel):
     type: ConstraintType
     description: str                        # Human-readable rule
     activation: PolicyActivation = PolicyActivation()
+    # Policy Tier (Fix 3). Defaults to operational; Tier-1 regulatory-floor
+    # constraints are declared in a signed Applicability Profile, not here.
+    tier: PolicyTier = PolicyTier.OPERATIONAL
 
 
 class IntentVector(BaseModel):
