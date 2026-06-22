@@ -192,14 +192,18 @@ def _check_cost_ceiling(
     constraint: Constraint,
     world_state: WorldModel,
 ) -> bool:
-    """Check if proposal's estimated cost exceeds the ceiling."""
+    """Check if proposal's estimated cost exceeds the ceiling.
+
+    Fails closed: if no ceiling can be parsed from the constraint, the kernel
+    cannot certify the proposal is within budget, so it is treated as a violation
+    (a malformed cost-ceiling rule must not silently permit unbounded spend).
+    """
     import re
     match = re.search(r'\$(\d+(?:\.\d+)?)', constraint.description)
-    if match:
-        ceiling = float(match.group(1))
-        if proposal.estimated_cost > ceiling:
-            return True
-    return False
+    if not match:
+        return True  # fail closed: ceiling indeterminable
+    ceiling = float(match.group(1))
+    return proposal.estimated_cost > ceiling
 
 
 # Registry of constraint-name -> concrete evaluator. A constraint whose name is
@@ -530,6 +534,10 @@ class GovernanceKernel:
             self._tier1_floor = [
                 c.model_copy(
                     update={
+                        # Force HARD: a regulatory-floor constraint must reject on
+                        # violation, never be a mere preference (a SOFT floor would
+                        # silently fail to enforce).
+                        "type": ConstraintType.HARD,
                         "tier": PolicyTier.REGULATORY_FLOOR,
                         "activation": PolicyActivation(always=True),
                     }
@@ -841,6 +849,13 @@ class GovernanceKernel:
                     tier = "require_approval"
                 elif escalated_idx >= 2:
                     tier = "require_approval"
+
+        # A final authorization level of L4 (Human Only) must escalate regardless
+        # of how it was reached — e.g. an action-type override or escalation that
+        # raised the level after the risk-based legacy tier was computed. Without
+        # this, an L4 action could be APPROVED with a stale tier='auto_execute'.
+        if auth_level == AuthorizationLevel.L4 and tier != "escalate":
+            tier = "escalate"
 
         # If risk exceeds system authority (L4), escalate
         if tier == "escalate":

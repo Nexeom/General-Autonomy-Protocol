@@ -235,3 +235,22 @@ class TestLineageTamperEvidence:
         assert verify(self.store.public_key_hex, message, record.signature) is True
         _, other_public = generate_keypair()
         assert verify(other_public, message, record.signature) is False
+
+    def test_genesis_deletion_detected(self):
+        """Deleting the genesis record (head truncation) must be detected."""
+        self.store._conn.execute("DELETE FROM lineage WHERE id = 'lin_0'")
+        self.store._conn.commit()
+        assert self.store.verify_chain_integrity() is False
+
+    def test_tail_deletion_detected(self):
+        """Deleting the most recent record (tail truncation / history erasure)
+        must be detected — a surviving prefix is otherwise internally consistent."""
+        self.store._conn.execute("DELETE FROM lineage WHERE id = 'lin_2'")
+        self.store._conn.commit()
+        assert self.store.verify_chain_integrity() is False
+
+    def test_prefix_truncation_detected(self):
+        """Deleting a leading run of records must be detected."""
+        self.store._conn.execute("DELETE FROM lineage WHERE id IN ('lin_0', 'lin_1')")
+        self.store._conn.commit()
+        assert self.store.verify_chain_integrity() is False

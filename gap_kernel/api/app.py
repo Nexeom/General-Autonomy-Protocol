@@ -95,7 +95,8 @@ def create_app(
     gk = governance_kernel or GovernanceKernel()
     ls = lineage_store or LineageStore()
     le = learning_engine or LearningEngine()
-    ef = ExecutionFabric(ws.model)
+    # Fail closed: the fabric verifies the kernel's signature on every decision.
+    ef = ExecutionFabric(ws.model, kernel_public_key_hex=gk.public_key_hex)
     config = reconciler_config or ReconcilerConfig()
 
     reconciler = ReconcilerLoop(

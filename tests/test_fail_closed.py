@@ -99,6 +99,26 @@ def test_unevaluable_soft_constraint_is_not_blocking():
     assert "prefer_something_unscored" not in decision.violated_constraints
 
 
+# --- Evaluator fail-closed on indeterminable parameters --------------------
+
+def test_cost_ceiling_fails_closed_without_amount():
+    """A HARD cost_ceiling whose amount cannot be parsed must reject, not silently
+    permit unbounded spend."""
+    kernel = GovernanceKernel()
+    intent = _intent(hard=[
+        Constraint(
+            name="cost_ceiling",
+            type=ConstraintType.HARD,
+            description="Spend must stay within budget",  # no parseable $amount
+        )
+    ])
+    decision = kernel.evaluate_proposal(
+        proposal=_low_risk_proposal(), intents=[intent], world_state=_empty_world()
+    )
+    assert decision.verdict == GovernanceVerdict.REJECTED
+    assert "cost_ceiling" in decision.violated_constraints
+
+
 # --- Temporal authority fail-closed ----------------------------------------
 
 def test_malformed_schedule_fails_closed_active():

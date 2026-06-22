@@ -51,7 +51,7 @@ def _world():
 
 
 def test_l0_approval_executes_autonomously():
-    loop = CGALoop(GovernanceKernel(), ExecutionFabric(_world()),
+    loop = CGALoop(GovernanceKernel(), ExecutionFabric(_world(), allow_unsigned_decisions=True),
                    strategy_generator=_FixedRiskGenerator(risk=1))
     result = loop.run(intent=_intent(), drift_event={}, world_state=_world())
     assert result.final_verdict == "approved"
@@ -85,7 +85,10 @@ def test_approve_and_execute_completes_l2_with_valid_signature():
     loop, result, approver_priv = _l2_loop_with_approver()
     decision = result.decisions[-1]
     valid_until = datetime.utcnow() + timedelta(minutes=5)
-    signature = sign(approver_priv, f"{decision.id}:{valid_until.isoformat()}")
+    # Sign the fabric's canonical OOB message (binds decision/proposal/level/approver/expiry).
+    decision.human_approver_public_key_id = "alice"
+    decision.human_approval_valid_until = valid_until
+    signature = sign(approver_priv, ExecutionFabric._oob_signed_message(decision))
 
     exec_result = loop.approve_and_execute(
         result.approved_proposal,

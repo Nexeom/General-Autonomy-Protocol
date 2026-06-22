@@ -85,6 +85,22 @@ class LineageStore:
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
+        # Chain anchor (Fix 5 hardening): a single row recording the expected
+        # record count and the genesis + tip signatures, updated on every append.
+        # It lets verify_chain_integrity detect head/tail/whole-chain truncation,
+        # which a per-record signature + neighbour-link check alone cannot (a
+        # surviving prefix/suffix is internally consistent). NOTE: in this
+        # prototype the anchor lives in the same SQLite file, so it raises the bar
+        # (an attacker must also rewrite the anchor) but is not absolute against
+        # full DB control — production anchors this in external/WORM storage.
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS chain_anchor (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                record_count INTEGER NOT NULL,
+                genesis_signature TEXT,
+                tip_signature TEXT
+            )
+        """)
         self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_lineage_cycle_id ON lineage(cycle_id)
         """)
@@ -143,8 +159,32 @@ class LineageStore:
                 full_json,
             ),
         )
+        self._update_anchor()
         self._conn.commit()
         return record
+
+    def _update_anchor(self) -> None:
+        """Refresh the chain anchor (count, genesis sig, tip sig) after an append."""
+        rows = self._conn.execute(
+            "SELECT signature FROM lineage ORDER BY rowid"
+        ).fetchall()
+        count = len(rows)
+        genesis = rows[0]["signature"] if rows else None
+        tip = rows[-1]["signature"] if rows else None
+        self._conn.execute(
+            "INSERT INTO chain_anchor (id, record_count, genesis_signature, tip_signature) "
+            "VALUES (1, ?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET "
+            "record_count = excluded.record_count, "
+            "genesis_signature = excluded.genesis_signature, "
+            "tip_signature = excluded.tip_signature",
+            (count, genesis, tip),
+        )
+
+    def _get_anchor(self) -> Optional[sqlite3.Row]:
+        return self._conn.execute(
+            "SELECT record_count, genesis_signature, tip_signature FROM chain_anchor WHERE id = 1"
+        ).fetchone()
 
     def _get_latest_hash(self) -> Optional[str]:
         """Get the signature of the most recent record."""
@@ -222,9 +262,27 @@ class LineageStore:
         rows = self._conn.execute(
             "SELECT record_json, signature, prior_record_hash FROM lineage ORDER BY rowid"
         ).fetchall()
+        anchor = self._get_anchor()
 
         if not rows:
-            return True
+            # Empty chain is intact only if the anchor agrees it is empty.
+            return anchor is None or anchor["record_count"] == 0
+
+        # 0. Anchor checks — detect head / tail / whole-chain truncation, which
+        #    a per-record + neighbour-link check cannot (a surviving prefix or
+        #    suffix is internally consistent).
+        if anchor is None:
+            return False
+        if len(rows) != anchor["record_count"]:
+            return False
+        if rows[0]["signature"] != anchor["genesis_signature"]:
+            return False
+        if rows[-1]["signature"] != anchor["tip_signature"]:
+            return False
+        # The first surviving record must be a true genesis (no prior link);
+        # otherwise a leading record was deleted and a later one promoted.
+        if rows[0]["prior_record_hash"] is not None:
+            return False
 
         for i, row in enumerate(rows):
             record = LineageRecord.model_validate_json(row["record_json"])
@@ -242,7 +300,6 @@ class LineageStore:
                 prior_sig = rows[i - 1]["signature"]
                 if record.prior_record_hash != prior_sig:
                     return False
-            # Genesis record may carry no prior hash; nothing to check.
 
         return True
 
