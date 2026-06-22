@@ -22,6 +22,12 @@ from uuid import uuid4
 
 from croniter import croniter
 
+from gap_kernel.crypto.signing import PublicKeyRegistry, generate_keypair, sign
+from gap_kernel.governance.dynamic_risk import (
+    DynamicRiskEngine,
+    EscalationConfig,
+)
+from gap_kernel.governance.profile import ApplicabilityProfile, verify_profile
 from gap_kernel.models.governance import (
     ActionTypeSpec,
     AuthorizationLevel,
@@ -31,8 +37,15 @@ from gap_kernel.models.governance import (
     PhaseConfig,
     RiskProfile,
     UncertaintyDeclaration,
+    canonical_decision_payload,
 )
-from gap_kernel.models.intent import Constraint, ConstraintType, IntentVector
+from gap_kernel.models.intent import (
+    Constraint,
+    ConstraintType,
+    IntentVector,
+    PolicyActivation,
+    PolicyTier,
+)
 from gap_kernel.models.strategy import StrategyProposal
 from gap_kernel.models.world import WorldModel
 
@@ -88,15 +101,13 @@ def _is_constraint_active(constraint: Constraint, current_time: datetime) -> boo
 
     if activation.schedule:
         try:
-            cron = croniter(activation.schedule, current_time)
-            prev_fire = cron.get_prev(datetime)
-            cron_check = croniter(activation.schedule, current_time)
-            next_fire = cron_check.get_next(datetime)
-            prev_fire = cron_check.get_prev(datetime)
-            if croniter.match(activation.schedule, current_time):
-                return True
+            return croniter.match(activation.schedule, current_time)
         except (ValueError, KeyError):
-            return False
+            # Fail closed (Fix 1): a malformed schedule must not silently disable
+            # a constraint. If the active window is unknowable, treat the
+            # constraint as active so it is still evaluated — a broken schedule
+            # on a HARD rule should be loud, not a silent bypass.
+            return True
 
     return False
 
@@ -116,17 +127,18 @@ def _check_constraint_violation(
     Uses a rule-based evaluation engine that maps constraint names to
     concrete checks. This is the extensible policy evaluation core.
     """
-    violation_checks: Dict[str, callable] = {
-        "gdpr_consent_required": _check_gdpr_consent,
-        "no_contact_outside_hours": _check_contact_hours,
-        "cost_ceiling": _check_cost_ceiling,
-    }
-
-    check_fn = violation_checks.get(constraint.name)
+    check_fn = _CONSTRAINT_EVALUATORS.get(constraint.name)
     if check_fn:
         return check_fn(proposal, constraint, world_state)
 
-    return _generic_constraint_check(proposal, constraint, world_state)
+    # Fail-closed (SA-2 / Fix 1): a constraint with no registered evaluator
+    # cannot be certified as satisfied, so it is treated as a violation.
+    # (Previously this fell through to a generic check that returned False,
+    # silently passing every unrecognized constraint.) Callers gate this per
+    # type — an unevaluable HARD constraint rejects; an unevaluable SOFT
+    # constraint is a preference the kernel simply cannot score (see
+    # evaluate_proposal).
+    return True
 
 
 def _check_gdpr_consent(
@@ -190,13 +202,19 @@ def _check_cost_ceiling(
     return False
 
 
-def _generic_constraint_check(
-    proposal: StrategyProposal,
-    constraint: Constraint,
-    world_state: WorldModel,
-) -> bool:
-    """Generic check for constraints without specific rule implementations."""
-    return False
+# Registry of constraint-name -> concrete evaluator. A constraint whose name is
+# absent here has no concrete check; the kernel cannot prove it satisfied and so
+# fails closed (see _check_constraint_violation and evaluate_proposal).
+_CONSTRAINT_EVALUATORS: Dict[str, callable] = {
+    "gdpr_consent_required": _check_gdpr_consent,
+    "no_contact_outside_hours": _check_contact_hours,
+    "cost_ceiling": _check_cost_ceiling,
+}
+
+
+def _constraint_has_evaluator(constraint: Constraint) -> bool:
+    """True if a concrete evaluator is registered for this constraint name."""
+    return constraint.name in _CONSTRAINT_EVALUATORS
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +277,25 @@ def _get_temporal_snapshot(current_time: datetime) -> dict:
 # ---------------------------------------------------------------------------
 # Authorization Level Mapping (L0-L4)
 # ---------------------------------------------------------------------------
+
+_AUTH_RANK = {
+    AuthorizationLevel.L0: 0,
+    AuthorizationLevel.L1: 1,
+    AuthorizationLevel.L2: 2,
+    AuthorizationLevel.L3: 3,
+    AuthorizationLevel.L4: 4,
+}
+
+
+def _satisfies_auth(granted: AuthorizationLevel, required: AuthorizationLevel) -> bool:
+    """True if a granted authorization level meets or exceeds a required one."""
+    return _AUTH_RANK[granted] >= _AUTH_RANK[required]
+
+
+def _max_auth(a: AuthorizationLevel, b: AuthorizationLevel) -> AuthorizationLevel:
+    """Return the higher (more restrictive) of two authorization levels."""
+    return a if _AUTH_RANK[a] >= _AUTH_RANK[b] else b
+
 
 def _determine_auth_level(max_risk: int) -> AuthorizationLevel:
     """
@@ -449,8 +486,56 @@ class GovernanceKernel:
     - Separation of Creation and Validation enforcement
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        escalation_config: Optional[EscalationConfig] = None,
+        strict_action_typing: bool = False,
+        applicability_profile: Optional[ApplicabilityProfile] = None,
+        profile_key_registry: Optional[PublicKeyRegistry] = None,
+        signing_key_hex: Optional[str] = None,
+        public_key_hex: Optional[str] = None,
+        kernel_key_id: str = "governance_kernel",
+    ):
         self._action_type_registry: Dict[str, ActionTypeSpec] = dict(_BASELINE_ACTION_TYPES)
+        self._dynamic_risk_engine = DynamicRiskEngine(
+            escalation_config or EscalationConfig()
+        )
+        # Kernel signing key (Fix 2). Every decision is signed so the Execution
+        # Fabric can verify it was produced by the kernel and not forged by an
+        # in-process agent. Generated per-kernel by default; production injects a
+        # managed key and shares only the public key with the execution layer.
+        if signing_key_hex and public_key_hex:
+            self._signing_key_hex = signing_key_hex
+            self._public_key_hex = public_key_hex
+        else:
+            self._signing_key_hex, self._public_key_hex = generate_keypair()
+        self._kernel_key_id = kernel_key_id
+        # Fail-closed action typing (SA-2 / Fix 1). When True, every proposal
+        # must declare a registered action_type_id or it is rejected — closing
+        # the bypass where omitting the field skipped the Action Type Registry
+        # gate entirely. Defaults False to preserve open-deployment behavior; a
+        # loaded Applicability Profile flips this on (the floor is now declared).
+        self._strict_action_typing = strict_action_typing or applicability_profile is not None
+
+        # Tier-1 regulatory floor (Fix 3). Loaded from a SIGNED Applicability
+        # Profile and verified here; an unsigned/tampered/unknown-key profile is
+        # refused (fail closed). Floor constraints are normalized to Tier 1 and
+        # always-active, so no lower-tier configuration can weaken or suspend
+        # them — embodying the Tier 3 <= Tier 2 <= Tier 1 guarantee.
+        self._tier1_floor: List[Constraint] = []
+        if applicability_profile is not None:
+            verify_profile(
+                applicability_profile, profile_key_registry or PublicKeyRegistry()
+            )
+            self._tier1_floor = [
+                c.model_copy(
+                    update={
+                        "tier": PolicyTier.REGULATORY_FLOOR,
+                        "activation": PolicyActivation(always=True),
+                    }
+                )
+                for c in applicability_profile.tier1_constraints
+            ]
 
     # --- Action Type Registry ---
 
@@ -566,7 +651,38 @@ class GovernanceKernel:
 
     # --- Core Evaluation ---
 
+    @property
+    def public_key_hex(self) -> str:
+        """The kernel's public key — the Execution Fabric verifies decisions with it."""
+        return self._public_key_hex
+
+    def _sign_decision(self, decision: GovernanceDecision) -> GovernanceDecision:
+        """Sign a decision with the kernel's private key (Fix 2)."""
+        decision.kernel_public_key_id = self._kernel_key_id
+        decision.decision_signature = sign(
+            self._signing_key_hex, canonical_decision_payload(decision)
+        )
+        return decision
+
     def evaluate_proposal(
+        self,
+        proposal: StrategyProposal,
+        intents: List[IntentVector],
+        world_state: WorldModel,
+        current_time: Optional[datetime] = None,
+        action_type_id: Optional[str] = None,
+    ) -> GovernanceDecision:
+        """Evaluate a proposal and cryptographically sign the resulting decision.
+
+        The signature lets the Execution Fabric confirm the decision came from
+        this kernel and was not forged or altered downstream.
+        """
+        decision = self._evaluate(
+            proposal, intents, world_state, current_time, action_type_id
+        )
+        return self._sign_decision(decision)
+
+    def _evaluate(
         self,
         proposal: StrategyProposal,
         intents: List[IntentVector],
@@ -585,20 +701,43 @@ class GovernanceKernel:
 
         decision_id = f"gov_{uuid4().hex[:12]}"
 
-        # 0. Action Type Registry check — reject unregistered action types
-        if action_type_id and not self.validate_action_type(action_type_id):
+        # 0. Action Type Registry gate.
+        #    - A declared-but-unregistered action type is always rejected.
+        #    - Under strict action typing (fail-closed, SA-2 / Fix 1) a missing
+        #      action_type_id is also rejected, so the gate cannot be bypassed by
+        #      simply omitting the field.
+        if action_type_id is not None:
+            if not self.validate_action_type(action_type_id):
+                return GovernanceDecision(
+                    id=decision_id,
+                    proposal_id=proposal.id,
+                    verdict=GovernanceVerdict.REJECTED,
+                    violated_constraints=[],
+                    rejection_reason="unregistered_action_type",
+                    rejection_detail=(
+                        f"Action type '{action_type_id}' is not registered in the "
+                        f"Action Type Registry. The system cannot take actions "
+                        f"outside its registered governance configuration."
+                    ),
+                    action_type_id=action_type_id,
+                    temporal_context=_get_temporal_snapshot(current_time),
+                    policy_snapshot={},
+                    evaluated_at=current_time,
+                )
+        elif self._strict_action_typing:
             return GovernanceDecision(
                 id=decision_id,
                 proposal_id=proposal.id,
                 verdict=GovernanceVerdict.REJECTED,
                 violated_constraints=[],
-                rejection_reason="unregistered_action_type",
+                rejection_reason="action_type_required",
                 rejection_detail=(
-                    f"Action type '{action_type_id}' is not registered in the "
-                    f"Action Type Registry. The system cannot take actions "
-                    f"outside its registered governance configuration."
+                    "Strict action typing is enabled but this proposal declared "
+                    "no action_type_id. Every action must declare a registered "
+                    "action type; the Action Type Registry gate cannot be "
+                    "bypassed by omitting the field."
                 ),
-                action_type_id=action_type_id,
+                action_type_id=None,
                 temporal_context=_get_temporal_snapshot(current_time),
                 policy_snapshot={},
                 evaluated_at=current_time,
@@ -607,18 +746,24 @@ class GovernanceKernel:
         # 1. Resolve active constraints based on temporal context
         active_constraints = self._get_active_constraints(intents, current_time)
 
-        # 2. Check all hard constraints (any violation = reject)
+        # 2. Check all hard constraints (any violation = reject). Fail-closed:
+        #    a HARD constraint with no registered evaluator cannot be certified
+        #    satisfied, so _check_constraint_violation treats it as a violation.
         hard_violations = []
         for constraint in active_constraints:
             if constraint.type == ConstraintType.HARD:
                 if _check_constraint_violation(proposal, constraint, world_state):
                     hard_violations.append(constraint.name)
 
-        # 3. Check soft constraints (violations logged but not blocking)
+        # 3. Check soft constraints (violations logged but not blocking). A SOFT
+        #    constraint is a preference; one with no registered evaluator cannot
+        #    be scored, so it is skipped rather than flagged as violated.
         soft_violations = []
         for constraint in active_constraints:
             if constraint.type == ConstraintType.SOFT:
-                if _check_constraint_violation(proposal, constraint, world_state):
+                if _constraint_has_evaluator(constraint) and _check_constraint_violation(
+                    proposal, constraint, world_state
+                ):
                     soft_violations.append(constraint.name)
 
         # Build uncertainty declaration for every decision
@@ -654,8 +799,48 @@ class GovernanceKernel:
         # Override with action type's default if specified and higher
         if action_type_id:
             action_spec = self._action_type_registry.get(action_type_id)
-            if action_spec and action_spec.default_authorization_level.value > auth_level.value:
-                auth_level = action_spec.default_authorization_level
+            if action_spec:
+                auth_level = _max_auth(
+                    auth_level, action_spec.default_authorization_level
+                )
+
+        # 4a. Dynamic Risk Escalation — check for runtime behavioral signals
+        escalation_triggered = False
+        escalation_reason = None
+        original_auth_level_str = None
+        escalated_auth_level_str = None
+        escalation_evidence = None
+
+        escalation_trigger = self._dynamic_risk_engine.evaluate(
+            action_type=action_type_id or proposal.actions[0].action_type if proposal.actions else "unknown",
+            action_context={
+                "current_auth_level": auth_level.value,
+                "target": proposal.actions[0].target if proposal.actions else "",
+                "proposal_id": proposal.id,
+            },
+            current_auth_level=auth_level.value,
+        )
+
+        if escalation_trigger is not None:
+            escalation_triggered = True
+            escalation_reason = escalation_trigger.description
+            original_auth_level_str = escalation_trigger.original_level
+            escalated_auth_level_str = escalation_trigger.escalated_level
+            escalation_evidence = escalation_trigger.evidence
+
+            # Apply escalation: override auth_level if escalated is higher
+            level_order = {"L0": 0, "L1": 1, "L2": 2, "L3": 3, "L4": 4}
+            escalated_idx = level_order.get(escalation_trigger.escalated_level, 0)
+            current_idx = level_order.get(auth_level.value, 0)
+            if escalated_idx > current_idx:
+                auth_level = AuthorizationLevel(escalation_trigger.escalated_level)
+                # Update legacy tier if escalation pushes to escalate range
+                if escalated_idx >= 4:
+                    tier = "escalate"
+                elif escalated_idx >= 3:
+                    tier = "require_approval"
+                elif escalated_idx >= 2:
+                    tier = "require_approval"
 
         # If risk exceeds system authority (L4), escalate
         if tier == "escalate":
@@ -675,6 +860,11 @@ class GovernanceKernel:
                 evaluated_at=current_time,
                 uncertainty=uncertainty,
                 action_type_id=action_type_id,
+                escalation_triggered=escalation_triggered,
+                escalation_reason=escalation_reason,
+                original_authorization_level=original_auth_level_str,
+                escalated_authorization_level=escalated_auth_level_str,
+                escalation_evidence=escalation_evidence,
             )
 
         # 5. Check intent conflicts
@@ -737,7 +927,7 @@ class GovernanceKernel:
                             phase_results=phase_results,
                         )
 
-        # 7. Approved
+        # 7. Approved — record escalation details if triggered
         return GovernanceDecision(
             id=decision_id,
             proposal_id=proposal.id,
@@ -751,6 +941,11 @@ class GovernanceKernel:
             uncertainty=uncertainty,
             action_type_id=action_type_id,
             phase_results=phase_results,
+            escalation_triggered=escalation_triggered,
+            escalation_reason=escalation_reason,
+            original_authorization_level=original_auth_level_str,
+            escalated_authorization_level=escalated_auth_level_str,
+            escalation_evidence=escalation_evidence,
         )
 
     def _get_active_constraints(
@@ -758,8 +953,11 @@ class GovernanceKernel:
         intents: List[IntentVector],
         current_time: datetime,
     ) -> List[Constraint]:
-        """Collect all active constraints from active intents, filtered by temporal authority."""
-        active = []
+        """Collect all active constraints: the Tier-1 floor (always active) plus
+        active intents' constraints filtered by temporal authority."""
+        # Tier-1 regulatory floor is always active and cannot be suspended,
+        # narrowed, or scheduled off by any intent or lower-tier configuration.
+        active: List[Constraint] = list(self._tier1_floor)
         for intent in intents:
             if not intent.active:
                 continue

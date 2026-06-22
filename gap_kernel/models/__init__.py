@@ -11,6 +11,12 @@ from gap_kernel.models.governance import (
     RiskProfile,
     UncertaintyDeclaration,
 )
+from gap_kernel.governance.dynamic_risk import (
+    DynamicRiskEngine,
+    EscalationConfig,
+    EscalationTrigger,
+    EscalationTriggerType,
+)
 from gap_kernel.models.intent import (
     Constraint,
     ConstraintType,
@@ -27,6 +33,10 @@ __all__ = [
     "ActionTypeSpec",
     "ArtifactProvenance",
     "AuthorizationLevel",
+    "DynamicRiskEngine",
+    "EscalationConfig",
+    "EscalationTrigger",
+    "EscalationTriggerType",
     "Constraint",
     "ConstraintType",
     "DampeningState",
