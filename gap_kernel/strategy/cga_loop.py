@@ -17,10 +17,14 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Protocol
 from uuid import uuid4
 
-from gap_kernel.execution.fabric import ExecutionFabric
+from gap_kernel.execution.fabric import _OOB_REQUIRED_LEVELS, ExecutionFabric
 from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.models.execution import ExecutionResult
-from gap_kernel.models.governance import GovernanceDecision, GovernanceVerdict
+from gap_kernel.models.governance import (
+    AuthorizationLevel,
+    GovernanceDecision,
+    GovernanceVerdict,
+)
 from gap_kernel.models.intent import IntentVector
 from gap_kernel.models.lineage import LineageRecord
 from gap_kernel.models.strategy import PlannedAction, StrategyProposal
@@ -309,10 +313,18 @@ class CGALoop:
 
             # 3. Route based on verdict
             if decision.verdict == GovernanceVerdict.APPROVED:
-                final_verdict = "approved"
                 approved_proposal = proposal
 
-                # 4. Dispatch to execution
+                # 4. L2+ ("Approve Before" and above) must not auto-execute — a
+                #    human Out-of-Band approval is required first. Surface these
+                #    as awaiting approval; the operator obtains a signature off
+                #    channel and calls approve_and_execute(). Only L0/L1 dispatch
+                #    autonomously here.
+                if decision.authorization_level in _OOB_REQUIRED_LEVELS:
+                    final_verdict = "awaiting_approval"
+                    break
+
+                final_verdict = "approved"
                 execution_result = self.execution.execute(proposal, decision)
                 break
 
@@ -345,6 +357,30 @@ class CGALoop:
             total_attempts=attempt,
             escalated=(final_verdict == "escalated"),
         )
+
+    def approve_and_execute(
+        self,
+        proposal: StrategyProposal,
+        decision: GovernanceDecision,
+        *,
+        human_approval_signature: str,
+        approver_key_id: str,
+        valid_until: datetime,
+        timestamp: Optional[datetime] = None,
+    ) -> ExecutionResult:
+        """Supply side of Fix 4 / Phase H.
+
+        Attach a human Out-of-Band approval — a signature obtained off-channel
+        over ``"<decision id>:<valid_until ISO>"`` — to an L2+ decision the loop
+        surfaced as ``awaiting_approval``, then dispatch it for execution. The
+        Execution Fabric verifies the signature; the loop never holds the
+        approver's private key.
+        """
+        decision.human_approval_signature = human_approval_signature
+        decision.human_approver_public_key_id = approver_key_id
+        decision.human_approval_valid_until = valid_until
+        decision.human_approval_timestamp = timestamp or datetime.utcnow()
+        return self.execution.execute(proposal, decision)
 
 
 class CGAResult:
