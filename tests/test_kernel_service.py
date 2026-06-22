@@ -75,12 +75,16 @@ def test_in_process_client_produces_verifiable_decisions():
     assert verify(client.public_key_hex, canonical_decision_payload(decision), decision.decision_signature)
 
 
-def test_client_does_not_expose_kernel_internals():
-    """The boundary: the agent-side client holds no kernel key or registry."""
+def test_inprocess_client_drops_service_reference():
+    """Defence in depth — the in-process client stores no service/kernel attribute.
+
+    NOTE: the in-process client is a convenience, NOT an isolation boundary (a
+    co-resident agent can still reach the kernel by reflection). The genuine
+    boundary is SubprocessGovernanceClient, asserted below.
+    """
     client = InProcessGovernanceClient(GovernanceService())
+    assert not hasattr(client, "_service")
     assert not hasattr(client, "_signing_key_hex")
-    assert not hasattr(client, "_action_type_registry")
-    assert not hasattr(client, "_tier1_floor")
 
 
 def test_cga_loop_runs_with_in_process_client():
@@ -95,10 +99,15 @@ def test_cga_loop_runs_with_in_process_client():
 # --- subprocess client (genuinely out-of-process) --------------------------
 
 def test_subprocess_client_evaluates_across_a_process_boundary():
+    from gap_kernel.governance.kernel import GovernanceKernel
+
     with SubprocessGovernanceClient() as client:
         assert client.public_key_hex  # handshake succeeded
-        # The agent side holds no kernel object/key — only a channel + public key.
+        # Genuine boundary: the agent-side process holds no kernel object, no
+        # signing key, no service — only a channel and the public key.
         assert not hasattr(client, "_signing_key_hex")
+        assert not hasattr(client, "_service")
+        assert not any(isinstance(v, GovernanceKernel) for v in vars(client).values())
         decision = client.evaluate_proposal(
             proposal=_proposal(), intents=[_intent()], world_state=_world()
         )
@@ -112,3 +121,37 @@ def test_subprocess_client_evaluates_across_a_process_boundary():
         # And it executes through a fabric wired with the service's public key.
         fabric = ExecutionFabric(_world(), kernel_public_key_hex=client.public_key_hex)
         assert fabric.execute(_proposal(), decision).success is True
+
+
+def test_subprocess_client_wraps_malformed_response():
+    """A non-JSON response surfaces as the single documented error type."""
+    import io
+    from gap_kernel.client.governance_client import GovernanceClientError
+
+    client = SubprocessGovernanceClient()
+    try:
+        client._proc.stdout = io.StringIO("not json\n")  # simulate a corrupt channel
+        with pytest.raises(GovernanceClientError, match="malformed response"):
+            client._call({"method": "get_public_key"})
+    finally:
+        client.close()
+
+
+def test_subprocess_client_call_times_out():
+    """A hung child fails closed instead of deadlocking the agent."""
+    import time
+    from gap_kernel.client.governance_client import GovernanceClientError
+
+    class _Hang:
+        def readline(self):
+            time.sleep(1.0)
+            return ""
+
+    client = SubprocessGovernanceClient()  # default timeout for the handshake
+    try:
+        client._timeout = 0.1  # subsequent calls fail fast
+        client._proc.stdout = _Hang()
+        with pytest.raises(GovernanceClientError, match="timed out"):
+            client._call({"method": "get_public_key"})
+    finally:
+        client.close()
