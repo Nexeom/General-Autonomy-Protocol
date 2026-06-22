@@ -36,7 +36,7 @@ standard. Read this matrix for the implementation's earned status.**
 | **CGA cannot negotiate around a hard constraint** — re-plan within bounds or escalate, never bypass (SA-1 / SA-5) | ✅ Implemented & Verified | `strategy/cga_loop.py` → `tests/test_adversarial.py` |
 | **Structured Uncertainty / Decision Records** | ✅ Implemented & Verified | `models/governance.py`, `governance/kernel.py` → `tests/test_spec_20260220.py` |
 | **Reconciler Tiers 1–3** (ML / cognitive / adversarial observation) | 📋 Normative / Planned | Tier 0 (rule-based) implemented; Tiers 1–3 reserved for production. |
-| **Structured Intent Resolution (SIR)** | 📋 Normative / Planned | Specified in `docs/gap-structured-intent-resolution.md`; not yet implemented. |
+| **Structured Intent Resolution (SIR)** | 🟡 Partial | `governance/sir.py`, `models/sir.py` → `tests/test_sir.py`. SIR-1 (five-component declaration), SIR-3 (proportional resolution + readiness gate), SIR-4 (cryptographic seal + decision link), SIR-5 (governed standing declarations: human-authored, expiring) implemented. SIR-2 meta-intent inference is a pluggable placeholder, and the resolver is standalone (not yet wired into the CGA loop). |
 
 ## Summary
 
