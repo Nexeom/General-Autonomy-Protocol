@@ -13,7 +13,7 @@
 | **Version Audited** | Commit `2b0b5d4` on branch `claude/gap-kernel-implementation-25Zt0` |
 | **Auditor Context** | Independent assessment requested by protocol author. Evidence-based evaluation of governance design and safe-autonomy properties. |
 | **Assessment Type** | Governance posture + safe-autonomy readiness |
-| **Status** | Baseline audit. Cross-reference with related Nexeom repositories pending. |
+| **Status** | Baseline audit complete. Cross-reference with 8 related Nexeom repositories completed June 2026 — see CROSS-REFERENCE. |
 
 ---
 
@@ -62,8 +62,9 @@ scope and calibration, not craftsmanship.
 - Production deployment configuration or infrastructure.
 - Performance characteristics or scalability.
 - External system integrations (CRM APIs, email systems, etc.).
-- The 8 related Nexeom repositories (pending separate cross-reference; see
-  CROSS-REFERENCE section below).
+- The 8 related Nexeom repositories were not independently audited in full;
+  they were cross-referenced against this audit's findings only (completed
+  June 2026 — see CROSS-REFERENCE section below).
 
 ---
 
@@ -352,20 +353,34 @@ mistake aspiration for assurance.
 
 ## CROSS-REFERENCE: RELATED REPOSITORIES
 
-The following Nexeom repositories may address some of the gaps identified in
-this audit. These repositories exist on the protocol author's local development
-environment and have not yet been evaluated.
+The following Nexeom repositories were cross-referenced (June 2026) against the
+gaps identified in this audit. Each was searched for the six pattern categories
+in the methodology below, and **every cited match was independently verified to
+be working implementation** rather than spec prose, stubs, comments, or naming
+coincidence — the same standard this audit holds GAP to. (This verification pass
+corrected several first-round overclaims: e.g. Xstatic's runtime kill-switch was
+initially missed, and AiTrium's approval-forgery test was found to exercise an
+inline-mirrored copy of the guard rather than the shipped path.)
 
-| Repository | Expected Relevance | What to Look For | Status |
+**Result: 0 Solved, 7 Partial, 1 Not found.** No single repository fully closes
+a GAP gap, but real, reusable safety primitives are scattered across the
+ecosystem — most notably tested Governance Integrity Monitoring (Evairi),
+crypto-signed tamper-evident lineage (Xstatic, AiTrium), an HMAC lineage
+verifier (AiTrium), Ed25519 decision-signing (Evolving Agent V1), and a DB-layer
+Iron Rule trigger (Nexeom-Protocol-Library). The recurring failure mode mirrors
+this audit's own thesis: detectors and cryptography exist but are **not wired
+into the live enforcement path**, and several integration points **fail open**.
+
+| Repository | Expected Relevance | Verdict | Key Evidence (verified June 2026) |
 |---|---|---|---|
-| **Nexeom-Protocol-Library** | G-2 (Structural Enforcement), Fix 2 | Separate service/process boundaries, IPC protocols, capability-based access | Pending |
-| **Xstatic** | SA-4 (Threat Model), SA-5 (Assurance) | Static analysis, adversarial testing harness, security patterns | Pending |
-| **Evolving Agent V1** | SA-1 (CGA Gaming), SA-3 (Autonomy Levels), SA-4 (Multi-Agent) | Agent wiring patterns, sub-agent governance, constraint propagation | Pending |
-| **Evairi-Engine** | G-3 (GIM Independence), Fix 6 | Independent monitoring, evaluation engine, drift detection | Pending |
-| **Evairi - Master system build** | G-3, G-4 (Oversight), Fix 6, Fix 7 | Master system architecture, evaluator independence, conformance | Pending |
-| **Endevai** | SA-4 (Capability Gain), Fix 3 (Tier Enforcement) | Policy enforcement, tier management, capability controls | Pending |
-| **AtriumDesktopBridge** | G-2 (Isolation), Fix 4 (OOB) | Desktop-to-agent bridge security, OOB channel implementation, process isolation | Pending |
-| **AiTrium** | G-4 (Human Oversight), Fix 7 (Conformance) | Human-in-the-loop UX, dashboard generation, oversight tooling | Pending |
+| **Nexeom-Protocol-Library** | G-2 (Structural Enforcement), Fix 2 | **Partial** | Real capability access + signed denial audit (`runtime-host/src/capabilities.ts`) and a DB-layer governance-*state* boundary (`governance/src/iron-rule.ts` Postgres RESTRICT trigger); but the governance *kernel* is in-process by design (`standalone.ts`, `attach.ts` HTTP transport stubbed "post-P1.7") — the G-2/Fix 2 separate-service isolation gap is reproduced, not closed. |
+| **Xstatic** | SA-4 (Threat Model), SA-5 (Assurance) | **Partial** | Crypto-signed append-only hash-chain lineage + immutability triggers + tamper tests (`substrate-stss` `transparency-log.ts`, `attestation.ts`), a fail-closed iron-rule engine, and a tested runtime kill-switch/containment (`apps/desktop/electron/embedded-agent/supervisor.ts`); but no behavioral drift/decomposition detection and no worker-side GIM producer. |
+| **Evolving Agent V1** | SA-1 (CGA Gaming), SA-3 (Autonomy Levels), SA-4 (Multi-Agent) | **Partial** | Tested decomposition/threshold-avoidance detector (`integrity_monitor.py`) + Ed25519 sign/verify with tamper test (`identity/signing_engine.py`); but detectors run on mock data and are never wired into the spawn path, the kill-switch performs no process termination, and policy/GAP paths fail **open**. |
+| **Evairi-Engine** | G-3 (GIM Independence), Fix 6 | **Partial** | Real, tested GIM (`packages/gim/` threshold-avoidance + authorization-drift; 128/128 tests pass) with a non-LLM rule-based independent classifier (genuine model-level independence); but process-level independence (sidecar) is absent and the separate-LLM classifier is deferred. |
+| **Evairi - Master system build** | G-3, G-4 (Oversight), Fix 6, Fix 7 | **Partial** | Tested GIM + independent-agent + human-authorization verifiers + a fail-closed governance sidecar (`packages/gim/`, `foundry/src/drift`); but evaluator independence is only inter-role on one audit trail, G-4 lacks independent summary rendering, and there is no Fix-7 conformance/maturity matrix. |
+| **Endevai** | SA-4 (Capability Gain), Fix 3 (Tier Enforcement) | **Not found** | A consumer chat/playground front-end that delegates governance to an external engine via an unverified `gap_decision` string defaulting to `approved` (`engine_client.py:39` — fails open); its `tier` is a billing quota (`usage_tracker.py`), not a regulatory floor. Negative example — nothing reusable. |
+| **AtriumDesktopBridge** | G-2 (Isolation), Fix 4 (OOB) | **Partial** | A real out-of-process JSON-RPC/stdio bridge (`server/cognitiveCore.ts`) usable as a Fix-2 isolation skeleton; but it fails **open** (returns "allowed" on error/degraded) and Fix 4 is absent — a plaintext `===` bearer token, no signature bound to a Decision Record. |
+| **AiTrium** | G-4 (Human Oversight), Fix 7 (Conformance) | **Partial** | A fail-closed HITL approval loop bound to an HMAC-SHA256 signed lineage record (`packages/decision-lineage-verifier`, approval `gateway.ts`/`service.ts`) + an `EvidenceLabel` conformance enum; but the operator dashboard is still generated by the governed runtime (no independent channel) and conformance labels lack requirement→verified-test traceability. |
 
 ### Cross-Reference Methodology
 
@@ -377,6 +392,97 @@ For each repository, evaluate against the following search patterns:
 - **Adversarial testing:** `grep -rE "(adversarial|red.team|attack|exploit|subvert|tamper)"`
 - **Tier enforcement:** `grep -rE "(tier|Tier.1|regulatory.floor|immutable.policy|signed.profile)"`
 - **Corrigibility / shutdown:** `grep -rE "(shutdown|corrigib|containment|kill.switch|emergency.stop)"`
+
+### Cross-Reference Findings: Import vs. Reimplement (June 2026)
+
+Component-level guidance, each item verified against the cited file. **Import** =
+adoptable largely as-is; **Adapt** = real and reusable, port the pattern/algorithm
+(most repos are TypeScript/Node + Postgres while GAP's reference impl is Python);
+**Reimplement** = the capability is genuinely unbuilt or stubbed in that repo and
+must be built for GAP.
+
+**Nexeom-Protocol-Library** — *Partial* (G-2, Fix 2)
+- **Adapt:** `governance/src/iron-rule.ts` Postgres `BEFORE UPDATE/DELETE` RESTRICT
+  trigger as a non-policy boundary on governance state; `runtime-host/src/capabilities.ts`
+  grant/check (reserved-namespace rejection + signed denial audit); the tier-agnostic
+  `ExecutionSandbox` (worker_threads/vm → nerdctl → Fly machines); Ed25519-over-canonical-input
+  verification (`marketplace/verification.ts`).
+- **Reimplement:** the separate-service governance boundary with no in-process import
+  path (the repo defers it as a documented stub) and GIM drift/decomposition (the `gim`
+  package is `package.json`-only).
+- **Caveat:** pair any imported crypto with a fail-**closed** policy — the runtime attach
+  path skips signature verification when no key resolver is wired (`modules.ts:54-55`).
+
+**Xstatic** — *Partial* (SA-4, SA-5)
+- **Import:** `substrate-identity/src/kms.ts` crypto layer near as-is.
+- **Adapt:** `substrate-stss` transparency-log hash-chain + immutability trigger (Fix 5);
+  `attestation.ts`/`sigstore.ts` sign-and-verify-over-digest (Fix 4); `iron-rule-check.ts`
+  fail-closed evaluator (Fix 1); `scoping.ts` authority-rank/no-loosening floor (Fix 3,
+  partial); the `99_corpora` adversarial JSONL; and `embedded-agent/supervisor.ts`
+  kill-switch/containment (refuse-restart, restart-budget, terminate, fail-closed bridge).
+- **Reimplement:** worker-side GIM trip producer + behavioral drift/decomposition
+  detection (Fix 6) — neither exists.
+
+**Evolving Agent V1** — *Partial* (SA-1, SA-3, SA-4)
+- **Import:** `identity/signing_engine.py` (Ed25519 sign/verify, tamper-tested) for Fix 4
+  (bind OOB auth to a signature over the Decision Record ID) and Fix 5.
+- **Adapt (detection logic only):** `integrity_monitor.py` (threshold-avoidance + collapse)
+  and `gim_signal_detector.py` for Fix 6; `policy_evaluator.py` tier-ordering for Fix 3.
+- **Reimplement:** fail-**closed** defaults (this repo fails open on eval exceptions,
+  absent metrics, and unknown action types); signed/immutable Tier-1 profile loading;
+  external hash-chained signed lineage with tamper tests; real process-level corrigibility
+  (no `os.kill`/`signal`/`psutil` anywhere); and wiring the detectors into the live spawn
+  path with real composition records (they currently run on mock sampling).
+
+**Evairi-Engine** — *Partial* (G-3, Fix 6)
+- **Import:** `packages/foundry/src/drift/zscore.ts` (pure z-score + chi-square
+  goodness-of-fit, no framework deps).
+- **Adapt:** the `gim` threshold-avoidance + authorization-drift detectors, the conversation
+  `accumulator.ts`, and the foundry 6-detector engine — the reusable core for Fix 6
+  (128/128 gim tests pass; the rule-based classifier is genuine model-level independence).
+- **Reimplement:** the out-of-process sidecar deployment (referenced but absent here) and
+  the separate-LLM independent classifier (still deferred) for G-3 structural independence.
+
+**Evairi - Master system build** — *Partial* (G-3, G-4, Fix 6, Fix 7)
+- **Import:** `packages/gim/src/signals/threshold-avoidance.ts` (GIM-3 decomposition,
+  self-contained pure function).
+- **Adapt:** `gim/authorization-drift.ts` + `runner-v2.ts` + `accumulator.ts` and
+  `foundry/src/drift` (`engine.ts`/`zscore.ts`) for GIM-1 drift; `human-authorization-verifier.ts`
+  + `independent-agent-verifier.ts` as operator / independent-eval scaffolds.
+- **Reimplement / build new:** a genuinely independent (different-model/key) classifier
+  (the docstring "MUST NOT share model" is unenforced); independent summary rendering for
+  G-4; the Fix-7 normative-vs-verified capability matrix (genuinely absent); and the
+  cumulative/accumulator drift mode (deferred to a later phase).
+- **Reference only:** the `governance-sidecar` process-boundary pattern (it still needs the
+  cryptographic authorization binding it does not provide).
+
+**Endevai** — *Not found* (SA-4, Fix 3)
+- **N/A — nothing reusable.** Endevai *consumes* governance decisions via an unverified
+  `gap_decision` string (defaults to `approved` → fails open); its `tier` is a billing
+  quota, not a regulatory floor. At most a **negative example** of trusting an unverified,
+  fail-open decision string from another process. GAP must build tier floors, signed
+  immutable profiles, capability/process isolation, and corrigibility elsewhere.
+
+**AtriumDesktopBridge** — *Partial* (G-2, Fix 4)
+- **Import:** the `child_process` + JSON-RPC-over-stdio transport from `server/cognitiveCore.ts`
+  as a Fix-2 structural-isolation skeleton.
+- **Reimplement:** all enforcement semantics — invert every fail-open default to fail-closed
+  (Fix 1), make the isolated engine the mandatory enforcement path (it is optional/absent-by-default),
+  and build Fix 4 from scratch (asymmetric signature over the specific Decision Record ID,
+  verified on an agent-independent channel). None of the repo's crypto (non-standard login
+  JWT, build-script binary hash, `===` bearer token) is reusable for decision authorization.
+
+**AiTrium** — *Partial* (G-4, Fix 7)
+- **Import:** `packages/decision-lineage-verifier` (`verify.ts` + `hmac.ts`) — a standalone,
+  zod-only HMAC-SHA256 hash-chain tamper-detection verifier, adoptable wholesale for Fix 5.
+- **Adapt:** the approval `gateway.ts` + `service.ts` pair (fail-closed HITL bound to a
+  signed, authz-gated lineage record) for G-4; the `EvidenceLabel` enum + `ModuleManifest`
+  wiring for Fix 7.
+- **Reimplement:** an independent-channel / anti-rubber-stamping summary source for the
+  operator dashboard (it is still generated by the governed runtime), and a machine-checkable
+  requirement→verified-test conformance matrix.
+- **Caveat:** the cited approval-forgery adversarial test exercises an inline-mirrored copy
+  of the guard with a TODO, not the shipped path — re-wire it against the production guard.
 
 ---
 
