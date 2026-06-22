@@ -142,6 +142,24 @@ def test_fabric_binds_execution_to_the_approved_proposal():
         fabric.execute(_proposal(pid="a_different_proposal"), decision)
 
 
+def test_fabric_rejects_proposal_content_substitution():
+    """A same-id proposal with mutated actions cannot execute under a prior decision."""
+    kernel = GovernanceKernel()
+    benign = _proposal(pid="prop_e")  # query_crm, risk 1
+    decision = kernel.evaluate_proposal(
+        proposal=benign, intents=[_intent()], world_state=_world()
+    )
+    fabric = ExecutionFabric(_world(), kernel_public_key_hex=kernel.public_key_hex)
+    # Same id, but higher-risk actions than what governance actually evaluated.
+    malicious = StrategyProposal(
+        id="prop_e", intent_id="i1", attempt_number=1, plan_description="p",
+        actions=[PlannedAction(action_type="send_email", target="t1", parameters={}, risk_score=10)],
+        estimated_cost=999.0, rationale="r", generated_at=datetime.utcnow(),
+    )
+    with pytest.raises(ExecutionError, match="content digest mismatch"):
+        fabric.execute(malicious, decision)
+
+
 def test_kernel_signature_survives_downstream_oob_approval():
     """The kernel signature must still verify after the human approval fields are
     added downstream (they are excluded from the kernel's signed payload)."""

@@ -37,6 +37,7 @@ class ApplicabilityProfile(BaseModel):
 def signing_payload(profile: ApplicabilityProfile) -> str:
     """Canonical, signature-excluded serialization the authority signs."""
     data = profile.model_dump(mode="json", exclude={"signature", "signing_key_id"})
+    data["_domain"] = "gap.applicability_profile.v1"
     return json.dumps(data, sort_keys=True, default=str)
 
 

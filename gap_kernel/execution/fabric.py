@@ -24,7 +24,11 @@ from gap_kernel.models.governance import (
     GovernanceVerdict,
     canonical_decision_payload,
 )
-from gap_kernel.models.strategy import PlannedAction, StrategyProposal
+from gap_kernel.models.strategy import (
+    PlannedAction,
+    StrategyProposal,
+    compute_proposal_digest,
+)
 from gap_kernel.models.world import WorldModel
 from gap_kernel.verification.oob_ledger import OOBLedger, ReplayError
 
@@ -130,6 +134,14 @@ class ExecutionFabric:
                 f"Decision {governance_decision.id} authorizes proposal "
                 f"'{governance_decision.proposal_id}', not '{proposal.id}'."
             )
+        # Content binding: the proposal's actions must match what was evaluated —
+        # a same-id proposal with mutated content cannot ride a prior decision.
+        if governance_decision.proposal_digest is not None:
+            if compute_proposal_digest(proposal) != governance_decision.proposal_digest:
+                raise ExecutionError(
+                    f"Decision {governance_decision.id} authorizes a different "
+                    f"version of proposal '{proposal.id}' (content digest mismatch)."
+                )
 
         # Structural boundary (Fix 2): trust only decisions the kernel signed.
         self._verify_decision_signature(governance_decision)
@@ -240,6 +252,7 @@ class ExecutionFabric:
         """
         return json.dumps(
             {
+                "_domain": "gap.oob_approval.v1",
                 "decision_id": decision.id,
                 "proposal_id": decision.proposal_id,
                 "authorization_level": (

@@ -46,7 +46,7 @@ from gap_kernel.models.intent import (
     PolicyActivation,
     PolicyTier,
 )
-from gap_kernel.models.strategy import StrategyProposal
+from gap_kernel.models.strategy import StrategyProposal, compute_proposal_digest
 from gap_kernel.models.world import WorldModel
 
 
@@ -688,6 +688,9 @@ class GovernanceKernel:
         decision = self._evaluate(
             proposal, intents, world_state, current_time, action_type_id
         )
+        # Bind the decision to the exact proposal it authorizes (content digest),
+        # then sign — so a same-id proposal with mutated actions is rejected.
+        decision.proposal_digest = compute_proposal_digest(proposal)
         return self._sign_decision(decision)
 
     def _evaluate(

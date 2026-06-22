@@ -282,6 +282,7 @@ class CGALoop:
         intents: Optional[List[IntentVector]] = None,
         intent_declaration: Optional[IntentDeclaration] = None,
         standing: Optional[StandingIntentDeclaration] = None,
+        action_type_id: Optional[str] = None,
     ) -> CGAResult:
         """
         Run the full CGA loop for a drift event.
@@ -342,6 +343,7 @@ class CGALoop:
                 proposal=proposal,
                 intents=intents,
                 world_state=world_state,
+                action_type_id=action_type_id,
             )
             decisions.append(decision)
 
@@ -453,6 +455,12 @@ class CGAResult:
         self.execution_result = execution_result
         self.total_attempts = total_attempts
         self.escalated = escalated
+
+    @property
+    def awaiting_approval(self) -> bool:
+        """True when an L2+ action was approved by governance but is held pending a
+        human Out-of-Band approval — it must reach a human, not be silently dropped."""
+        return self.final_verdict == "awaiting_approval"
 
     def build_lineage_record(
         self,

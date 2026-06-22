@@ -285,8 +285,11 @@ class ReconcilerLoop:
         # Operational learning
         self.learning.learn_from_lineage(lineage_record)
 
-        # Handle escalation
-        if cga_result.escalated:
+        # Route to a human: either an escalation, OR an L2+ action that governance
+        # approved but that is held pending Out-of-Band approval. Without this, an
+        # awaiting_approval outcome would be silently dropped (the high-stakes
+        # action neither executes nor reaches a human).
+        if cga_result.escalated or cga_result.awaiting_approval:
             escalation = {
                 "id": f"esc_{uuid4().hex[:12]}",
                 "cycle_id": cycle_id,
@@ -300,7 +303,9 @@ class ReconcilerLoop:
                     for d in cga_result.decisions
                     if d.rejection_reason
                 ],
-                "status": "pending",
+                "status": (
+                    "awaiting_approval" if cga_result.awaiting_approval else "pending"
+                ),
                 "created_at": current_time.isoformat(),
             }
             self._escalation_queue.append(escalation)

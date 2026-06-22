@@ -216,6 +216,7 @@ class StructuredIntentResolver:
         data = declaration.model_dump(
             mode="json", exclude={"integrity_signature", "signing_key_id"}
         )
+        data["_domain"] = "gap.sir_declaration.v1"
         return json.dumps(data, sort_keys=True, default=str)
 
     def seal(
