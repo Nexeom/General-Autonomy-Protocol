@@ -180,13 +180,27 @@ was written against (head of `claude/gap-kernel-implementation-25Zt0`, 2026-06-2
   against a registered key and consumes it in the ledger, replacing the prior
   string-presence checks. Tests: `tests/test_oob_verification.py` (incl. forged
   signature, tampered expiry, unknown key, expired, replay across a fresh fabric).
-- ⏭️ **Next: Phase C (Fix 3)** and **Phase D (Fix 5)** can proceed in parallel —
-  both build on the Phase B crypto substrate.
+- ✅ **Fix-1 hardening — landed.** `_is_constraint_active` now fails closed on a
+  malformed cron schedule (was a silent fail-open).
+- ✅ **Phase C (Fix 3) — landed.** `PolicyTier` enum + `tier` on `Constraint`; a
+  signed, runtime-immutable `ApplicabilityProfile` (`gap_kernel/governance/profile.py`,
+  Ed25519 via Phase B) verified on kernel construction (refusing unsigned/tampered/
+  unknown-key profiles); the Tier-1 floor is always active and cannot be weakened
+  by any intent or lower tier; rank-based `_satisfies_auth`/`_max_auth` comparator.
+  Tests: `tests/test_tier_enforcement.py`.
+- ✅ **Phase D (Fix 5) — landed.** Lineage records are Ed25519-**signed** (not a
+  recomputable SHA-256); `verify_chain_integrity` verifies signatures + chain.
+  Tamper tests added (`tests/test_lineage.py`): mutated field, recompute-the-hash
+  forgery, broken chain link even when re-signed, independent public-key verify.
+- ⏭️ **Next: Phase E (Fix 2 isolation)**, then **Phase F (Fix 6 GIM)**, then
+  **Phase G (SA-5 + Fix 7 conformance)**.
 
-Known follow-ups surfaced during the build (out of scope for A/B):
-- The CGA loop (`strategy/cga_loop.py:316`) auto-executes any APPROVED decision,
-  including L2+, without first obtaining the OOB approval that L2+ now requires —
-  the human-in-the-loop wiring that *supplies* the signature belongs with the
-  approval flow, not the verifier built here.
-- A malformed cron string silently makes a constraint inactive
-  (`governance/kernel.py` `_is_constraint_active`) — a minor residual fail-open.
+### Phase H — L2+ approval gating & human-in-the-loop wiring (added 2026-06-22)
+
+Surfaced while building Phase B: the CGA loop (`strategy/cga_loop.py:316`)
+auto-executes any APPROVED decision, including L2+, without first *obtaining* the
+OOB approval that L2+ now requires. Today this fails closed (the fabric rejects
+an unsigned L2+ decision), but ungracefully. This phase is the *supply side* of
+Fix 4 — route L2+ approvals to a pending-approval queue, collect the human
+signature over an agent-independent channel, and re-submit for execution. Pairs
+with **G-4 human oversight**; tackle alongside Phase F/G.

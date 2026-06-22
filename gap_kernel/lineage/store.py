@@ -1,37 +1,66 @@
 """
-Decision Lineage Store — append-only, cryptographically chained audit record.
+Decision Lineage Store — append-only, cryptographically signed + chained audit record.
 
 Every reconciliation cycle produces one LineageRecord.
 
 Behavioral Contract:
 - Append-only. No record is ever modified or deleted.
-- Each record is hashed and chained to the previous record (tamper-evident ledger).
+- Each record is Ed25519-signed and chained to the previous record. Unlike a
+  bare hash (which anyone could recompute after tampering), the signature
+  requires the lineage private key, so a record cannot be altered and re-sealed
+  without it — the chain is genuinely tamper-evident (Fix 5).
 - Every record answers: What intent? What drift? What was proposed?
   What was approved/rejected? Why? What happened?
 - Queryable by intent, entity, time range, escalation status, constraint violation type.
 """
 
-import hashlib
 import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
+from gap_kernel.crypto.signing import generate_keypair, sign, verify
 from gap_kernel.models.lineage import LineageRecord
 
 
 class LineageStore:
     """
     Append-only decision lineage store.
-    Prototype: SQLite. Production: PostgreSQL with row-level security.
+    Prototype: SQLite. Production: PostgreSQL with row-level security + an
+    external append-only anchor.
     """
 
-    def __init__(self, db_path: str = ":memory:"):
+    def __init__(
+        self,
+        db_path: str = ":memory:",
+        signing_key_hex: Optional[str] = None,
+        public_key_hex: Optional[str] = None,
+    ):
         self.db_path = db_path
+        # Ed25519 lineage signing key. Generated per-store by default; a
+        # production deployment injects a managed key (and shares only the
+        # public key with independent verifiers).
+        if signing_key_hex and public_key_hex:
+            self._signing_key_hex = signing_key_hex
+            self._public_key_hex = public_key_hex
+        else:
+            self._signing_key_hex, self._public_key_hex = generate_keypair()
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._init_schema()
+
+    @property
+    def public_key_hex(self) -> str:
+        """The public key an independent verifier uses to check the chain."""
+        return self._public_key_hex
+
+    @staticmethod
+    def _canonical_message(record: LineageRecord) -> str:
+        """Deterministic, signature-excluded serialization that is signed/verified."""
+        record_dict = record.model_dump(mode="json")
+        record_dict["signature"] = ""
+        return json.dumps(record_dict, sort_keys=True, default=str)
 
     def _init_schema(self) -> None:
         """Create the lineage table if it doesn't exist."""
@@ -76,12 +105,11 @@ class LineageStore:
         prior_hash = self._get_latest_hash()
         record.prior_record_hash = prior_hash
 
-        # Compute signature over the full record
-        record_dict = record.model_dump(mode="json")
-        # Zero out signature before hashing (it's what we're computing)
-        record_dict["signature"] = ""
-        record_bytes = json.dumps(record_dict, sort_keys=True, default=str).encode()
-        record.signature = hashlib.sha256(record_bytes).hexdigest()
+        # Ed25519-sign the record (over its canonical, signature-excluded form,
+        # which includes prior_record_hash — so the signature also seals the
+        # chain link). Tampering any field invalidates the signature, and it
+        # cannot be re-sealed without the lineage private key.
+        record.signature = sign(self._signing_key_hex, self._canonical_message(record))
 
         # Serialize full record for storage
         full_json = json.dumps(record.model_dump(mode="json"), default=str)
@@ -184,7 +212,13 @@ class LineageStore:
         return [self._deserialize(r) for r in reversed(rows)]
 
     def verify_chain_integrity(self) -> bool:
-        """Verify no records have been tampered with."""
+        """Verify no records have been tampered with.
+
+        For each record: the Ed25519 signature must verify against the lineage
+        public key over the record's canonical form, and its ``prior_record_hash``
+        must match the previous record's signature (the chain link). Either
+        failure — a mutated field or a broken link — returns False.
+        """
         rows = self._conn.execute(
             "SELECT record_json, signature, prior_record_hash FROM lineage ORDER BY rowid"
         ).fetchall()
@@ -195,24 +229,20 @@ class LineageStore:
         for i, row in enumerate(rows):
             record = LineageRecord.model_validate_json(row["record_json"])
 
-            # Recompute the signature
-            record_dict = record.model_dump(mode="json")
-            record_dict["signature"] = ""
-            record_bytes = json.dumps(record_dict, sort_keys=True, default=str).encode()
-            expected_sig = hashlib.sha256(record_bytes).hexdigest()
-
-            if record.signature != expected_sig:
+            # 1. Signature must verify (proves authenticity + content integrity).
+            if not verify(
+                self._public_key_hex,
+                self._canonical_message(record),
+                record.signature or "",
+            ):
                 return False
 
-            # Check chain link
+            # 2. Chain link must match the previous record's signature.
             if i > 0:
                 prior_sig = rows[i - 1]["signature"]
                 if record.prior_record_hash != prior_sig:
                     return False
-            else:
-                # First record should have no prior hash
-                if record.prior_record_hash is not None:
-                    pass  # Allow None or empty for genesis record
+            # Genesis record may carry no prior hash; nothing to check.
 
         return True
 

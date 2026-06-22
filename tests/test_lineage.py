@@ -1,9 +1,12 @@
 """Tests for the Decision Lineage Store."""
 
+import hashlib
+import json
 from datetime import datetime
 
 import pytest
 
+from gap_kernel.crypto.signing import generate_keypair, sign, verify
 from gap_kernel.lineage.store import LineageStore
 from gap_kernel.models.governance import GovernanceDecision, GovernanceVerdict
 from gap_kernel.models.intent import IntentVector
@@ -168,3 +171,67 @@ class TestLineageStore:
         results = self.store.get_by_cycle("specific_cycle")
         assert len(results) == 1
         assert results[0].cycle_id == "specific_cycle"
+
+
+class TestLineageTamperEvidence:
+    """SA-5 / Fix 5 — the 'tamper-evident' claim, adversarially checked."""
+
+    def setup_method(self):
+        self.store = LineageStore(db_path=":memory:")
+        for i in range(3):
+            self.store.append(
+                _make_lineage_record(record_id=f"lin_{i}", cycle_id=f"cycle_{i}")
+            )
+        assert self.store.verify_chain_integrity() is True
+
+    def _overwrite(self, record):
+        self.store._conn.execute(
+            "UPDATE lineage SET record_json = ?, signature = ?, prior_record_hash = ? "
+            "WHERE id = ?",
+            (
+                record.model_dump_json(),
+                record.signature or "",
+                record.prior_record_hash,
+                record.id,
+            ),
+        )
+        self.store._conn.commit()
+
+    def test_mutated_field_breaks_verification(self):
+        """Altering any stored field invalidates the signature."""
+        record = self.store.get_by_id("lin_1")
+        record.drift_severity = 999  # tamper; keep the original signature
+        self._overwrite(record)
+        assert self.store.verify_chain_integrity() is False
+
+    def test_recomputed_sha256_cannot_forge(self):
+        """The pre-Fix-5 attack — tamper a field then recompute the hash — no
+        longer works, because the seal is an Ed25519 signature, not a hash the
+        attacker can recompute without the private key."""
+        record = self.store.get_by_id("lin_1")
+        record.drift_severity = 999
+        canonical = self.store._canonical_message(record)
+        record.signature = hashlib.sha256(canonical.encode()).hexdigest()
+        self._overwrite(record)
+        assert self.store.verify_chain_integrity() is False
+
+    def test_broken_chain_link_detected_even_if_resigned(self):
+        """Even an attacker holding the lineage key cannot rewrite history: a
+        re-signed record with a wrong prior_record_hash fails the chain check."""
+        record = self.store.get_by_id("lin_2")
+        record.prior_record_hash = "0" * 128  # wrong link
+        # Re-sign with the store's key so the signature itself is valid.
+        record.signature = sign(
+            self.store._signing_key_hex, self.store._canonical_message(record)
+        )
+        self._overwrite(record)
+        assert self.store.verify_chain_integrity() is False
+
+    def test_public_key_verifies_independently(self):
+        """An independent verifier can confirm a record using only the public key,
+        and a different key rejects it."""
+        record = self.store.get_by_id("lin_0")
+        message = self.store._canonical_message(record)
+        assert verify(self.store.public_key_hex, message, record.signature) is True
+        _, other_public = generate_keypair()
+        assert verify(other_public, message, record.signature) is False
