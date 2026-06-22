@@ -192,11 +192,16 @@ was written against (head of `claude/gap-kernel-implementation-25Zt0`, 2026-06-2
   recomputable SHA-256); `verify_chain_integrity` verifies signatures + chain.
   Tamper tests added (`tests/test_lineage.py`): mutated field, recompute-the-hash
   forgery, broken chain link even when re-signed, independent public-key verify.
-- ✅ **Phase E (Fix 2) — landed.** Every decision is kernel-Ed25519-signed; the
-  Execution Fabric refuses unsigned/forged/tampered/wrong-kernel decisions
-  (`canonical_decision_payload` excludes the downstream OOB fields). Process
-  isolation remains a deployment topology — the signing boundary means the
-  execution layer needs only the kernel public key. `tests/test_decision_integrity.py`.
+- ✅ **Phase E (Fix 2) — landed in full.** (1) Unforgeability: every decision is
+  kernel-Ed25519-signed; the Execution Fabric refuses unsigned/forged/tampered/
+  wrong-kernel decisions (`tests/test_decision_integrity.py`). (2) **Out-of-process
+  boundary**: the kernel runs behind a constrained service API
+  (`service/kernel_server.py`) and the agent consumes a client
+  (`client/governance_client.py`, In-Process + **Subprocess**) holding only the
+  public key + a request channel — never the kernel, its private key, or its
+  registry (`tests/test_kernel_service.py`, incl. a real subprocess). A client is
+  a drop-in for the kernel in CGALoop. Only hardware/OS-sandbox isolation remains
+  a deployment concern.
 - ✅ **Phase F (Fix 6) — landed.** Independent rule-based GIM
   (`governance/integrity_monitor.py`): GIM-1 authorization drift + GIM-3
   threshold-avoidance decomposition. `tests/test_gim.py`. GIM-2/4/5 + a
