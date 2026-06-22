@@ -41,7 +41,7 @@ now holds.
 | 4 | Real OOB verification | **Stub.** `_verify_oob_authority` checks that two string fields are non-empty; replay protection is an in-memory `set`. No cryptographic signature, no persistence. | `gap_kernel/execution/fabric.py:122-157`; `gap_kernel/models/governance.py` OOB fields |
 | 5 | Signed external lineage | **Partial.** SHA-256 hash chain (not a signature), SQLite `:memory:` default (no external anchor / WORM), in-process verifier, **zero tamper tests**. | `gap_kernel/lineage/store.py:30`, `:84`, `:186-217`; `tests/test_lineage.py` |
 | 6 | Governance Integrity Monitoring | **Not started.** 0 lines; spec only in `docs/gap-governance-integrity-monitoring.md` (GIM-1..GIM-5). SIR likewise spec-only. | new `gap_kernel/governance/integrity_monitor.py`; `tests/test_gim.py` |
-| 7 | Conformance / maturity statement | **Missing.** README asserts structural guarantees throughout with no normative-vs-verified distinction. | `README.md:57,120,126,131,188-212,234,365,435-436,558`; new conformance matrix |
+| 7 | Conformance / maturity statement | **Missing.** The spec asserts structural guarantees throughout with no normative-vs-verified distinction (the public `README.md` carries condensed echoes). | `docs/PROTOCOL_SPECIFICATION.md:57,120,126,131,188-212,234,365,435-436,558`; new conformance matrix |
 | SA-5 | Adversarial assurance | **Absent.** 133 tests, ~95% happy-path; no tamper test, no constraint-negotiation test, no kernel-bypass test. | `tests/` (new adversarial suite) |
 
 Reconciler Tiers 1–3 (ML/cognitive/adversarial) are intentionally "reserved for
@@ -108,7 +108,7 @@ The hardest lift; makes "a path that does not exist" true.
 
 ### Phase G — Adversarial assurance + conformance (SA-5 + Fix 7) · **S–M** · cross-cutting, finalized last
 - Build the adversarial suite that proves the claims: lineage tamper, CGA negotiating around a hard constraint (must fail), threshold-decomposition (Phase F), OOB spoof/replay (Phase B), kernel-bypass/forged-decision (Phase E).
-- **Fix 7 as a *living* conformance matrix:** seed it at Phase A start (every claim tagged *normative requirement* vs *implemented & verified*), and flip rows to "verified" as each phase lands. Because we are *earning* the claims, the strong README language (`README.md:57,120,131,190,194,206,234,435-436,558`) stays — but is gated behind the matrix until its phase is green.
+- **Fix 7 as a *living* conformance matrix:** seed it at Phase A start (every claim tagged *normative requirement* vs *implemented & verified*), and flip rows to "verified" as each phase lands. Because we are *earning* the claims, the strong specification language (`docs/PROTOCOL_SPECIFICATION.md:57,120,131,190,194,206,234,435-436,558`, echoed in `README.md`) stays — but is gated behind the matrix until its phase is green.
 - **Verify:** full regression (currently ~133 tests) green at every phase boundary; the matrix shows no claim marked "verified" without a passing adversarial test.
 
 ---
