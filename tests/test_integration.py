@@ -69,15 +69,19 @@ def test_sir_gate_blocks_until_confirmed():
 
 def test_sir_gate_l0_requires_valid_standing():
     resolver = StructuredIntentResolver()
-    decl = resolver.resolve("routine sync", AuthorizationLevel.L0)
+    decl = resolver.resolve("routine sync", AuthorizationLevel.L0, intent_class="routine")
     loop = _loop(intent_resolver=resolver)
 
     blocked = loop.run(intent=_intent(), drift_event={}, world_state=_world(),
                        intent_declaration=decl)  # no standing
     assert blocked.final_verdict == "awaiting_intent_confirmation"
 
+    # A valid standing covering the same intent class (its own intent confirmed).
+    standing_decl = resolver.confirm(
+        resolver.resolve("routine sync", AuthorizationLevel.L0, intent_class="routine")
+    )
     standing = StandingIntentDeclaration(
-        standing_id="s1", intent_class="routine", declaration=decl,
+        standing_id="s1", intent_class="routine", declaration=standing_decl,
         authored_by="ops_lead", expires_at=datetime.utcnow() + timedelta(days=1),
     )
     ok = loop.run(intent=_intent(), drift_event={}, world_state=_world(),

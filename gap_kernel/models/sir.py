@@ -40,6 +40,7 @@ class CorrectionRecord(BaseModel):
 class IntentDeclaration(BaseModel):
     """The five-component Intent Declaration (SIR-1)."""
     declaration_id: str
+    intent_class: Optional[str] = None           # for L0: the standing-declaration class it belongs to
     stated_intent: str                           # the human directive, verbatim
     interpreted_intent: str                      # the system's operational reading
     meta_intent: MetaIntent
