@@ -73,12 +73,14 @@ def test_corrected_declaration_is_ready():
 
 # --- SIR-5: standing declaration governance --------------------------------
 
-def _standing(authored_by="ops_lead", expires_at=None):
+def _standing(authored_by="ops_lead", expires_at=None, intent_class="crm_sync"):
     r = _resolver()
-    decl = r.resolve("routine CRM sync", AuthorizationLevel.L0, created_at=NOW)
+    decl = r.confirm(
+        r.resolve("routine CRM sync", AuthorizationLevel.L0, intent_class=intent_class, created_at=NOW)
+    )
     return StandingIntentDeclaration(
         standing_id="std_1",
-        intent_class="crm_sync",
+        intent_class=intent_class,
         declaration=decl,
         authored_by=authored_by,
         expires_at=expires_at or (NOW + timedelta(days=30)),
@@ -87,9 +89,23 @@ def _standing(authored_by="ops_lead", expires_at=None):
 
 def test_l0_ready_only_with_valid_standing_declaration():
     r = _resolver()
-    decl = r.resolve("routine CRM sync", AuthorizationLevel.L0, created_at=NOW)
+    decl = r.resolve("routine CRM sync", AuthorizationLevel.L0, intent_class="crm_sync", created_at=NOW)
     assert r.is_ready_for_cga(decl, now=NOW) is False  # no standing
     assert r.is_ready_for_cga(decl, standing=_standing(), now=NOW) is True
+
+
+def test_standing_does_not_cover_unrelated_intent():
+    """A standing for one intent class must not bless an unrelated L0 intent."""
+    r = _resolver()
+    unrelated = r.resolve("wire $1M to vendor", AuthorizationLevel.L0,
+                          intent_class="funds_transfer", created_at=NOW)
+    assert r.is_ready_for_cga(unrelated, standing=_standing(intent_class="crm_sync"), now=NOW) is False
+
+
+def test_l0_declaration_without_intent_class_is_not_covered():
+    r = _resolver()
+    decl = r.resolve("routine CRM sync", AuthorizationLevel.L0, created_at=NOW)  # no intent_class
+    assert r.is_ready_for_cga(decl, standing=_standing(), now=NOW) is False
 
 
 def test_standing_authored_by_system_is_rejected():

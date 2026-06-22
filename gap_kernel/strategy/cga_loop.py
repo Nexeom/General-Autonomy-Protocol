@@ -18,8 +18,11 @@ from typing import Any, Callable, Dict, List, Optional, Protocol
 from uuid import uuid4
 
 from gap_kernel.execution.fabric import _OOB_REQUIRED_LEVELS, ExecutionFabric
+from gap_kernel.governance.integrity_monitor import GovernanceIntegrityMonitor
 from gap_kernel.governance.kernel import GovernanceKernel
+from gap_kernel.governance.sir import StructuredIntentResolver
 from gap_kernel.models.execution import ExecutionResult
+from gap_kernel.models.sir import IntentDeclaration, StandingIntentDeclaration
 from gap_kernel.models.governance import (
     AuthorizationLevel,
     GovernanceDecision,
@@ -259,11 +262,17 @@ class CGALoop:
         execution_fabric: ExecutionFabric,
         strategy_generator: Optional[StrategyGenerator] = None,
         max_attempts: int = 3,
+        intent_resolver: Optional[StructuredIntentResolver] = None,
+        integrity_monitor: Optional[GovernanceIntegrityMonitor] = None,
     ):
         self.governance = governance_kernel
         self.execution = execution_fabric
         self.strategy_gen = strategy_generator or RuleBasedStrategyGenerator()
         self.max_attempts = max_attempts
+        # SIR (intent-transfer governance) and GIM (integrity monitoring) are
+        # optional, opt-in hooks. When a resolver is needed it is created lazily.
+        self.intent_resolver = intent_resolver
+        self.integrity_monitor = integrity_monitor
 
     def run(
         self,
@@ -271,15 +280,40 @@ class CGALoop:
         drift_event: dict,
         world_state: WorldModel,
         intents: Optional[List[IntentVector]] = None,
+        intent_declaration: Optional[IntentDeclaration] = None,
+        standing: Optional[StandingIntentDeclaration] = None,
     ) -> CGAResult:
         """
         Run the full CGA loop for a drift event.
 
-        Returns a CGAResult containing all proposals, decisions,
-        and the final outcome.
+        If an ``intent_declaration`` is supplied (SIR), the loop will not engage
+        until that intent is resolved — confirmed/corrected for L1+, or backed by
+        a valid standing declaration for L0 — surfacing ``awaiting_intent_confirmation``
+        otherwise. If an integrity monitor is configured (GIM), every decision is
+        observed and any signals are returned on the result.
+
+        Returns a CGAResult containing all proposals, decisions, and the outcome.
         """
         if intents is None:
             intents = [intent]
+
+        # SIR gate: govern the intent-transfer moment before any action is planned.
+        if intent_declaration is not None:
+            resolver = self.intent_resolver or StructuredIntentResolver()
+            if not resolver.is_ready_for_cga(intent_declaration, standing=standing):
+                return CGAResult(
+                    intent=intent,
+                    drift_event=drift_event,
+                    proposals=[],
+                    decisions=[],
+                    accumulated_constraints=[],
+                    final_verdict="awaiting_intent_confirmation",
+                    approved_proposal=None,
+                    execution_result=None,
+                    total_attempts=0,
+                    escalated=False,
+                    integrity_signals=[],
+                )
 
         proposals: List[StrategyProposal] = []
         decisions: List[GovernanceDecision] = []
@@ -310,6 +344,11 @@ class CGALoop:
                 world_state=world_state,
             )
             decisions.append(decision)
+
+            # GIM: feed the decision to the integrity monitor (drift / decomposition).
+            if self.integrity_monitor is not None:
+                target = proposal.actions[0].target if proposal.actions else None
+                self.integrity_monitor.observe_decision(decision, target=target)
 
             # 3. Route based on verdict
             if decision.verdict == GovernanceVerdict.APPROVED:
@@ -356,6 +395,9 @@ class CGALoop:
             execution_result=execution_result,
             total_attempts=attempt,
             escalated=(final_verdict == "escalated"),
+            integrity_signals=(
+                self.integrity_monitor.scan() if self.integrity_monitor is not None else []
+            ),
         )
 
     def approve_and_execute(
@@ -398,6 +440,7 @@ class CGAResult:
         execution_result: Optional[ExecutionResult],
         total_attempts: int,
         escalated: bool,
+        integrity_signals: Optional[list] = None,
     ):
         self.intent = intent
         self.drift_event = drift_event
@@ -406,6 +449,7 @@ class CGAResult:
         self.accumulated_constraints = accumulated_constraints
         self.final_verdict = final_verdict
         self.approved_proposal = approved_proposal
+        self.integrity_signals = integrity_signals if integrity_signals is not None else []
         self.execution_result = execution_result
         self.total_attempts = total_attempts
         self.escalated = escalated

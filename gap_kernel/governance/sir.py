@@ -101,11 +101,13 @@ class StructuredIntentResolver:
         meta_intent: Optional[MetaIntent] = None,
         declared_boundaries: Optional[List[str]] = None,
         declaration_id: Optional[str] = None,
+        intent_class: Optional[str] = None,
         created_at: Optional[datetime] = None,
     ) -> IntentDeclaration:
         """Produce an Intent Declaration (PENDING) for the stated intent."""
         return IntentDeclaration(
             declaration_id=declaration_id or f"intent_{uuid4().hex[:12]}",
+            intent_class=intent_class,
             stated_intent=stated_intent,
             interpreted_intent=interpreted_intent or stated_intent,
             meta_intent=meta_intent or self._infer_meta_intent(stated_intent),
@@ -156,7 +158,9 @@ class StructuredIntentResolver:
     ) -> bool:
         """Whether the CGA loop may engage on this declaration.
 
-        L0: requires a valid, human-authored, unexpired Standing Declaration.
+        L0: requires a valid, human-authored, unexpired Standing Declaration that
+            actually covers THIS declaration's intent class (the standing's
+            pre-approval must be scoped to the intent it authorizes).
         L1+: requires the declaration to be CONFIRMED or CORRECTED (not PENDING).
         """
         if declaration.authorization_level == AuthorizationLevel.L0:
@@ -166,7 +170,12 @@ class StructuredIntentResolver:
                 self.validate_standing(standing, now=now)
             except StandingIntentError:
                 return False
-            return True
+            # Bind the standing to this declaration: a standing for one intent
+            # class must not bless an unrelated L0 intent. Both must carry the
+            # same non-empty intent class.
+            if not declaration.intent_class:
+                return False
+            return declaration.intent_class == standing.intent_class
         return declaration.confirmation_state in _READY_STATES
 
     # --- SIR-5 standing-declaration governance ---
@@ -188,6 +197,16 @@ class StructuredIntentResolver:
             raise StandingIntentError(
                 f"Standing declaration '{standing.standing_id}' expired at "
                 f"{standing.expires_at.isoformat()}; human re-confirmation required."
+            )
+        # The pre-resolved intent must itself be an L0, human-confirmed intent —
+        # a standing cannot pre-approve an unconfirmed or higher-tier declaration.
+        if standing.declaration.authorization_level != AuthorizationLevel.L0:
+            raise StandingIntentError(
+                f"Standing declaration '{standing.standing_id}' must carry an L0 intent."
+            )
+        if standing.declaration.confirmation_state not in _READY_STATES:
+            raise StandingIntentError(
+                f"Standing declaration '{standing.standing_id}' intent is not confirmed."
             )
 
     # --- SIR-4 cryptographic seal + lineage link ---
