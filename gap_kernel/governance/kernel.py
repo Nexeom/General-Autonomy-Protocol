@@ -92,15 +92,13 @@ def _is_constraint_active(constraint: Constraint, current_time: datetime) -> boo
 
     if activation.schedule:
         try:
-            cron = croniter(activation.schedule, current_time)
-            prev_fire = cron.get_prev(datetime)
-            cron_check = croniter(activation.schedule, current_time)
-            next_fire = cron_check.get_next(datetime)
-            prev_fire = cron_check.get_prev(datetime)
-            if croniter.match(activation.schedule, current_time):
-                return True
+            return croniter.match(activation.schedule, current_time)
         except (ValueError, KeyError):
-            return False
+            # Fail closed (Fix 1): a malformed schedule must not silently disable
+            # a constraint. If the active window is unknowable, treat the
+            # constraint as active so it is still evaluated — a broken schedule
+            # on a HARD rule should be loud, not a silent bypass.
+            return True
 
     return False
 

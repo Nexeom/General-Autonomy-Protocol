@@ -10,9 +10,14 @@ These tests assert the kernel denies by default rather than silently passing:
 
 from datetime import datetime
 
-from gap_kernel.governance.kernel import GovernanceKernel
+from gap_kernel.governance.kernel import GovernanceKernel, _is_constraint_active
 from gap_kernel.models.governance import GovernanceVerdict
-from gap_kernel.models.intent import Constraint, ConstraintType, IntentVector
+from gap_kernel.models.intent import (
+    Constraint,
+    ConstraintType,
+    IntentVector,
+    PolicyActivation,
+)
 from gap_kernel.models.strategy import PlannedAction, StrategyProposal
 from gap_kernel.models.world import WorldModel
 
@@ -92,6 +97,34 @@ def test_unevaluable_soft_constraint_is_not_blocking():
     )
     assert decision.verdict == GovernanceVerdict.APPROVED
     assert "prefer_something_unscored" not in decision.violated_constraints
+
+
+# --- Temporal authority fail-closed ----------------------------------------
+
+def test_malformed_schedule_fails_closed_active():
+    """A constraint with a malformed cron schedule must be treated as active
+    (still evaluated), not silently disabled."""
+    constraint = Constraint(
+        name="time_scoped_rule",
+        type=ConstraintType.HARD,
+        description="A time-scoped rule with a broken schedule",
+        activation=PolicyActivation(always=False, schedule="not-a-valid-cron"),
+    )
+    assert _is_constraint_active(constraint, datetime.utcnow()) is True
+
+
+def test_valid_schedule_outside_window_is_inactive():
+    """A well-formed schedule that does not match the current time is inactive
+    (the fail-closed change must not make every scheduled constraint always-on)."""
+    # Fires only at 03:00; evaluate at a fixed non-matching minute.
+    constraint = Constraint(
+        name="nightly_rule",
+        type=ConstraintType.HARD,
+        description="Active only at 03:00",
+        activation=PolicyActivation(always=False, schedule="0 3 * * *"),
+    )
+    noon = datetime(2026, 6, 22, 12, 0, 0)
+    assert _is_constraint_active(constraint, noon) is False
 
 
 # --- Strict action typing --------------------------------------------------
