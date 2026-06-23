@@ -237,12 +237,19 @@ input and parsed thresholds by first-match from free text, mistaking a "45 CFR"
 citation for a threshold (now a structured `Constraint.threshold` field, fail-closed
 coercion). Suite: **336 passing**.
 
+**Second frontier pass (2026-06-23).** Continuing in-repo: the **IP/content
+evaluator (Cat 8)** now ships, taking the regulatory floor to **8 of 8** concrete
+evaluators; and **SA-5 was quantified** — `pytest-cov` reports **~89 % line
+coverage** (governance core 90–100 %), and **property-based fuzzing** (`hypothesis`)
+asserts the kernel and monitors *fail closed, never crash* across hundreds of
+random inputs (`tests/test_property_based.py`), closing the "never re-quantified /
+no fuzzing" SA-5 residual.
+
 **Honestly remaining (Normative / Planned, not stubbed):** independent-*model* GIM
 evaluators; an out-of-process / separately-keyed GIM with a human-only reporting
 channel (the deeper half of G-3); GIM-4 framing telemetry fed on the shipped path
 (G-4); a distributed sub-agent fabric and live-executor wiring of the sub-agent
-registry; coverage / mutation / fuzz quantification (SA-5); IP/content (Cat 8) as a
-kernel evaluator versus provenance tracking; SIR-2 meta-intent inference; Reconciler
-Tiers 1–3; hardware/OS-sandbox isolation; and a semantic (model-level) capability
+registry; mutation testing (SA-5); SIR-2 meta-intent inference; Reconciler Tiers
+1–3; hardware/OS-sandbox isolation; and a semantic (model-level) capability
 measurement for SA-4. These have genuine infrastructure dependencies and are
 disclosed in `CONFORMANCE.md` rather than simulated.

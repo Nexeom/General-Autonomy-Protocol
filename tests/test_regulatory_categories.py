@@ -201,3 +201,35 @@ def test_safety_compliant_within_boundary():
 def test_safety_not_triggered_for_non_safety_critical_action():
     d = _evaluate("safety_boundary", params={})
     assert _not_rejected(d)
+
+
+# --- Category 8: IP / Content (IP-risk assessment + provenance) -------------
+
+def test_ip_violation_when_content_generated_without_risk_assessment():
+    d = _evaluate("ip_content_risk", params={"generates_content": True})
+    assert _rejected(d, "ip_content_risk")
+
+
+def test_ip_compliant_low_risk_with_assessment():
+    d = _evaluate("ip_content_risk",
+                  params={"generates_content": True, "ip_risk_assessment": "low risk"})
+    assert _not_rejected(d)
+
+
+def test_ip_high_risk_without_provenance_violates():
+    d = _evaluate("ip_content_risk",
+                  params={"generates_content": True, "ip_risk_assessment": "reviewed",
+                          "public_distribution": True})  # high-risk, no provenance
+    assert _rejected(d, "ip_content_risk")
+
+
+def test_ip_high_risk_with_provenance_is_compliant():
+    d = _evaluate("ip_content_risk",
+                  params={"generates_content": True, "ip_risk_assessment": "reviewed",
+                          "trademark_usage": True, "provenance": "C2PA manifest #abc"})
+    assert _not_rejected(d)
+
+
+def test_ip_not_triggered_for_non_content_action():
+    d = _evaluate("ip_content_risk", params={})
+    assert _not_rejected(d)
