@@ -77,6 +77,7 @@ class ReconcilerTriggerResponse(BaseModel):
 class EscalationResolveRequest(BaseModel):
     resolution: str
     resolver: str
+    chosen_option_id: Optional[str] = None   # GIM-4: which presented option the human chose
 
 
 class ProposalReviewRequest(BaseModel):
@@ -529,13 +530,22 @@ def create_app(
 
     @app.post("/escalations/{escalation_id}/resolve")
     def resolve_escalation(escalation_id: str, req: EscalationResolveRequest):
-        """Human provides guidance."""
+        """Human provides guidance (with the option chosen, when framed options
+        were presented — feeds GIM-4 escalation-framing-bias detection)."""
         result = reconciler.resolve_escalation(
-            escalation_id, req.resolution, req.resolver
+            escalation_id, req.resolution, req.resolver,
+            chosen_option_id=req.chosen_option_id,
         )
         if not result:
             raise HTTPException(404, "Escalation not found or already resolved")
         return result
+
+    @app.get("/reconciler/framing-bias")
+    def get_framing_bias():
+        """GIM-4: the current escalation-framing-bias signal (null until enough
+        framed human resolutions have been observed)."""
+        signal = reconciler.escalation_framing_bias()
+        return {"signal": signal.model_dump(mode="json") if signal else None}
 
     return app
 
