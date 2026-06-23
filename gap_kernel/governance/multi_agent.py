@@ -231,10 +231,12 @@ class SubAgentRegistry:
         window, spread across **two or more distinct agents** — a high-tier task
         decomposed across sub-agents to keep each piece sub-threshold.
 
-        Detection is monotonic: it slides the window over the low-authorization
-        actions and flags the first window that qualifies, so appending later
-        traffic (of any rank) to the same target can never evict an already-
-        qualifying cluster and suppress the signal.
+        Detection is recency-relative: it considers the band of low-authorization
+        actions within ``decomposition_window`` of the most recent one, so it
+        fires during a burst and CLEARS once the burst ages out (rather than
+        latching forever). A later *higher*-rank action cannot suppress an active
+        burst — high-rank actions are filtered out, so they do not move the
+        recency anchor.
         """
         low = sorted(
             (o for o in self._actions_by_target.get(target, [])
@@ -243,27 +245,26 @@ class SubAgentRegistry:
         )
         if len(low) < self.decomposition_count_threshold:
             return None
-        window_seconds = int(self.decomposition_window.total_seconds())
-        for i, anchor in enumerate(low):
-            window_end = anchor.at + self.decomposition_window
-            cluster = [o for o in low[i:] if o.at <= window_end]
-            agents = {o.agent_id for o in cluster}
-            if len(cluster) >= self.decomposition_count_threshold and len(agents) >= 2:
-                return IntegritySignal(
-                    signal_type="GIM-3-multiagent",
-                    subject=target,
-                    severity="warning",
-                    detail=(
-                        f"{len(cluster)} low-authorization actions against '{target}' "
-                        f"within {window_seconds}s, spread across {len(agents)} agents "
-                        f"— possible cross-agent threshold-avoidance decomposition."
-                    ),
-                    evidence={
-                        "count": len(cluster),
-                        "agents": sorted(agents),
-                        "max_rank": self.decomposition_max_rank,
-                    },
-                )
+        newest = low[-1].at
+        band = [o for o in low if newest - o.at <= self.decomposition_window]
+        agents = {o.agent_id for o in band}
+        if len(band) >= self.decomposition_count_threshold and len(agents) >= 2:
+            window_seconds = int(self.decomposition_window.total_seconds())
+            return IntegritySignal(
+                signal_type="GIM-3-multiagent",
+                subject=target,
+                severity="warning",
+                detail=(
+                    f"{len(band)} low-authorization actions against '{target}' "
+                    f"within {window_seconds}s, spread across {len(agents)} agents "
+                    f"— possible cross-agent threshold-avoidance decomposition."
+                ),
+                evidence={
+                    "count": len(band),
+                    "agents": sorted(agents),
+                    "max_rank": self.decomposition_max_rank,
+                },
+            )
         return None
 
 

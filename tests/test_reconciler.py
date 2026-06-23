@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from gap_kernel.execution.fabric import ExecutionFabric
+from gap_kernel.governance.integrity_monitor import GovernanceIntegrityMonitor
 from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.learning.engine import LearningEngine
 from gap_kernel.lineage.store import LineageStore
@@ -251,3 +252,124 @@ class TestReconcilerLoop:
 
         # Should no longer be pending
         assert len(self.reconciler.pending_escalations) == 0
+
+
+# --- GIM wired onto the autonomous heartbeat --------------------------------
+
+def _drifting_world_and_intent():
+    """A world with one EU lead in active SLA drift + its intent (mirrors above)."""
+    world_store = WorldModelStore()
+    intent = _make_sla_intent()
+    created_at = datetime.utcnow() - timedelta(minutes=8)
+    world_store.upsert_entity(EntityState(
+        entity_type="lead", entity_id="lead_4821",
+        properties={"name": "EU Lead", "value": 50000, "geo": "US",
+                    "gdpr_consent": True, "local_hour": 14,
+                    "created_at": created_at.isoformat()},
+        last_updated=datetime.utcnow(), source="crm", obligations=["lead_response_sla"],
+    ))
+    return world_store, intent
+
+
+def _reconciler_with(world_store, *, monitor=None, block=False):
+    governance = GovernanceKernel()
+    fabric = ExecutionFabric(world_store.model,
+                             kernel_public_key_hex=governance.public_key_hex)
+    reconciler = ReconcilerLoop(
+        world_store=world_store, governance_kernel=governance, execution_fabric=fabric,
+        lineage_store=LineageStore(db_path=":memory:"), learning_engine=LearningEngine(),
+        config=ReconcilerConfig(cooldown_seconds=0),
+        integrity_monitor=monitor, block_on_integrity=block,
+    )
+    return reconciler
+
+
+def test_reconciler_holds_and_escalates_on_integrity_signal():
+    """GIM consequential on the autonomous heartbeat: an action GIM flags is HELD
+    (not executed) and routed to the human queue as integrity_hold."""
+    world_store, intent = _drifting_world_and_intent()
+    monitor = GovernanceIntegrityMonitor(decomposition_count_threshold=1)
+    reconciler = _reconciler_with(world_store, monitor=monitor, block=True)
+    reconciler.register_intent(intent)
+
+    results = reconciler.reconcile_once()
+
+    held = [r for r in results if r["verdict"] == "integrity_hold"]
+    assert held, "expected at least one action to be held by GIM"
+    assert all(r["execution_success"] is False for r in held)
+    # No outreach happened — the lead was never contacted.
+    assert "last_contacted" not in world_store.model.entities["lead_4821"].properties
+    # The hold reached a human as an integrity_hold escalation (not silently dropped).
+    assert any(e["status"] == "integrity_hold" for e in reconciler._escalation_queue)
+
+
+def test_reconciler_integrity_hold_is_open_and_resolvable():
+    """The held action must reach a human and be resolvable — not a dead letter.
+    It is invisible to pending_escalations (pending-only) but surfaced by
+    open_escalations and clearable via resolve_escalation."""
+    world_store, intent = _drifting_world_and_intent()
+    monitor = GovernanceIntegrityMonitor(decomposition_count_threshold=1)
+    reconciler = _reconciler_with(world_store, monitor=monitor, block=True)
+    reconciler.register_intent(intent)
+
+    reconciler.reconcile_once()
+
+    assert reconciler.pending_escalations == []                  # not in pending-only
+    opens = reconciler.open_escalations
+    assert any(e["status"] == "integrity_hold" for e in opens)   # but is surfaced
+    esc_id = next(e["id"] for e in opens if e["status"] == "integrity_hold")
+    resolved = reconciler.resolve_escalation(esc_id, "reviewed; upheld", "admin")
+    assert resolved is not None and resolved["status"] == "resolved"
+    assert not any(e["status"] == "integrity_hold" for e in reconciler.open_escalations)
+
+
+def test_held_target_does_not_pile_up_and_trips_the_breaker():
+    """A permanently-held target must not re-queue an escalation every cycle, and
+    the circuit breaker must trip (held cycles count as failures) so it stops
+    being reprocessed forever."""
+    world_store, intent = _drifting_world_and_intent()
+    monitor = GovernanceIntegrityMonitor(decomposition_count_threshold=1)
+    reconciler = _reconciler_with(world_store, monitor=monitor, block=True)
+    reconciler.register_intent(intent)
+
+    for _ in range(7):
+        reconciler.reconcile_once()
+
+    holds = [e for e in reconciler._escalation_queue if e["entity_id"] == "lead_4821"]
+    assert len(holds) == 1                                       # deduped, not 7
+    assert reconciler._dampening["lead_4821"].circuit_broken is True  # breaker tripped
+
+
+def test_reconciler_without_monitor_executes_normally():
+    """Open posture: no monitor wired => no integrity holds (backward compatible)."""
+    world_store, intent = _drifting_world_and_intent()
+    reconciler = _reconciler_with(world_store)  # no monitor, no block
+    reconciler.register_intent(intent)
+
+    results = reconciler.reconcile_once()
+
+    assert results
+    assert all(r["verdict"] != "integrity_hold" for r in results)
+
+
+def test_reconciler_uses_one_persistent_shared_monitor():
+    """One monitor watches the whole decision stream: a single reconcile cycle
+    over two drifting entities feeds both their decisions into the SAME monitor
+    instance, so erosion spanning multiple drift events is detectable."""
+    world_store, intent = _drifting_world_and_intent()
+    created_at = (datetime.utcnow() - timedelta(minutes=8)).isoformat()
+    world_store.upsert_entity(EntityState(
+        entity_type="lead", entity_id="lead_4822",
+        properties={"name": "EU Lead 2", "value": 40000, "geo": "US",
+                    "gdpr_consent": True, "local_hour": 14, "created_at": created_at},
+        last_updated=datetime.utcnow(), source="crm", obligations=["lead_response_sla"],
+    ))
+    monitor = GovernanceIntegrityMonitor(decomposition_count_threshold=99)  # won't hold
+    reconciler = _reconciler_with(world_store, monitor=monitor, block=True)
+    reconciler.register_intent(intent)
+
+    reconciler.reconcile_once()
+
+    assert reconciler._integrity_monitor is monitor          # one persistent monitor
+    assert monitor._by_target.get("lead_4821")               # saw the first lead
+    assert monitor._by_target.get("lead_4822")               # and the second

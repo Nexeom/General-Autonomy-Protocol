@@ -57,6 +57,12 @@ class _Observation(BaseModel):
     at: datetime
 
 
+def _cap(seq: list, max_len: int) -> None:
+    """Trim a list in place to its last ``max_len`` elements (bounds memory)."""
+    if len(seq) > max_len:
+        del seq[: len(seq) - max_len]
+
+
 def _phi(xs: List[bool], ys: List[bool]) -> float:
     """Phi (mean-square contingency) correlation between two equal-length binary
     series, in [-1, 1]. Returns 0.0 when a margin is degenerate (no variance), so
@@ -98,7 +104,14 @@ class GovernanceIntegrityMonitor:
         endorsement_threshold: float = 0.85,
         material_change_floor: float = 0.10,
         collapse_endorsement_rate: float = 0.98,
+        # Bounded state for a long-running monitor (e.g. on the reconciler
+        # heartbeat). Per-key observation lists and the GIM-2/4/5 sample lists are
+        # capped at max_history; per-target observations are additionally pruned to
+        # the decomposition window's retention horizon on ingest, so memory and
+        # per-cycle CPU stay bounded regardless of process lifetime.
+        max_history: int = 1024,
     ):
+        self._max_history = max(1, max_history)
         self._by_action: Dict[str, List[_Observation]] = defaultdict(list)
         self._by_target: Dict[str, List[_Observation]] = defaultdict(list)
         self.baseline_window = baseline_window
@@ -140,9 +153,18 @@ class GovernanceIntegrityMonitor:
             target=target,
             at=timestamp or datetime.utcnow(),
         )
-        self._by_action[action_type].append(obs)
+        # Cap each per-key list by COUNT (not time): memory stays bounded on a
+        # long-running monitor, while recency/aging is handled in the detectors
+        # (check_decomposition uses a recency band). A count cap — unlike a
+        # time-prune — never lets a later high-rank action evict an active
+        # low-rank burst from the store.
+        bucket = self._by_action[action_type]
+        bucket.append(obs)
+        _cap(bucket, self._max_history)
         if target is not None:
-            self._by_target[target].append(obs)
+            tbucket = self._by_target[target]
+            tbucket.append(obs)
+            _cap(tbucket, self._max_history)
         return obs
 
     def observe_decision(
@@ -186,9 +208,9 @@ class GovernanceIntegrityMonitor:
         two is the point: a system that performs compliance only when it knows it
         is watched diverges across modes.
         """
-        self._audit_samples[bool(audited)].append(
-            {"rank": _RANK[authorization_level], "escalated": bool(escalated)}
-        )
+        samples = self._audit_samples[bool(audited)]
+        samples.append({"rank": _RANK[authorization_level], "escalated": bool(escalated)})
+        _cap(samples, self._max_history)
 
     def observe_escalation(
         self,
@@ -210,6 +232,7 @@ class GovernanceIntegrityMonitor:
             "first_option_chosen": bool(first_option_chosen),
             "preferred_favorably_framed": bool(preferred_favorably_framed),
         })
+        _cap(self._escalations, self._max_history)
 
     def observe_challenge(self, *, endorsed: bool, material_change: bool) -> None:
         """GIM-5 ingestion: record the outcome of one adversarial challenge.
@@ -222,6 +245,7 @@ class GovernanceIntegrityMonitor:
             "endorsed": bool(endorsed),
             "material_change": bool(material_change),
         })
+        _cap(self._challenges, self._max_history)
 
     # --- detectors ---------------------------------------------------------
 
@@ -247,12 +271,15 @@ class GovernanceIntegrityMonitor:
         return None
 
     def check_decomposition(self, target: str) -> Optional[IntegritySignal]:
-        """GIM-3: flag many low-authorization actions against one target in a window.
+        """GIM-3: flag many low-authorization actions against one target within a
+        RECENT window.
 
-        Detection is monotonic: it slides the window over the low-authorization
-        actions and flags the first qualifying window, so a later action on the
-        same target (of any rank) cannot move the anchor and evict an already-
-        qualifying cluster.
+        Detection is recency-relative: it considers the band of low-authorization
+        actions within ``decomposition_window`` of the most recent one. This fires
+        during a burst and CLEARS once the burst ages out (so a target that once
+        tripped is not held forever), while a later *higher*-rank action cannot
+        suppress an active burst (high-rank actions are filtered out, so they do
+        not move the recency anchor).
         """
         low = sorted(
             (o for o in self._by_target.get(target, [])
@@ -261,21 +288,20 @@ class GovernanceIntegrityMonitor:
         )
         if len(low) < self.decomposition_count_threshold:
             return None
-        window_seconds = int(self.decomposition_window.total_seconds())
-        for i, anchor in enumerate(low):
-            window_end = anchor.at + self.decomposition_window
-            cluster = [o for o in low[i:] if o.at <= window_end]
-            if len(cluster) >= self.decomposition_count_threshold:
-                return IntegritySignal(
-                    signal_type="GIM-3",
-                    subject=target,
-                    detail=(
-                        f"{len(cluster)} low-authorization actions against '{target}' "
-                        f"within {window_seconds}s — possible threshold-avoidance "
-                        f"decomposition."
-                    ),
-                    evidence={"count": len(cluster), "max_rank": self.decomposition_max_rank},
-                )
+        newest = low[-1].at
+        band = [o for o in low if newest - o.at <= self.decomposition_window]
+        if len(band) >= self.decomposition_count_threshold:
+            window_seconds = int(self.decomposition_window.total_seconds())
+            return IntegritySignal(
+                signal_type="GIM-3",
+                subject=target,
+                detail=(
+                    f"{len(band)} low-authorization actions against '{target}' "
+                    f"within {window_seconds}s — possible threshold-avoidance "
+                    f"decomposition."
+                ),
+                evidence={"count": len(band), "max_rank": self.decomposition_max_rank},
+            )
         return None
 
     def check_audit_divergence(self) -> Optional[IntegritySignal]:

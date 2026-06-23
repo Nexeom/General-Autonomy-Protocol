@@ -262,3 +262,30 @@ class TestFullAPIScenario:
         # 6. Check reconciler status
         status_response = client.get("/reconciler/status")
         assert status_response.status_code == 200
+
+
+class TestOpenEscalations:
+    """A GIM integrity_hold / awaiting_approval must be visible and resolvable via
+    the REST surface — not a dead letter behind the pending-only listing."""
+
+    def test_open_escalations_surfaces_and_resolves_a_hold(self, client):
+        reconciler = client.app.state.reconciler
+        # Simulate a held action routed to the human queue.
+        reconciler._escalation_queue.append({
+            "id": "esc_test", "entity_id": "lead_1", "intent_id": "i1",
+            "status": "integrity_hold", "created_at": "2026-06-23T00:00:00",
+        })
+
+        # Invisible to the pending-only listing ...
+        assert client.get("/escalations/pending").json() == []
+        # ... but surfaced by /escalations/open ...
+        open_ids = [e["id"] for e in client.get("/escalations/open").json()]
+        assert "esc_test" in open_ids
+        assert client.get("/reconciler/status").json()["open_escalations"] == 1
+
+        # ... and resolvable (no longer a 404 dead letter).
+        resolve = client.post("/escalations/esc_test/resolve",
+                              json={"resolution": "upheld", "resolver": "admin"})
+        assert resolve.status_code == 200
+        assert resolve.json()["status"] == "resolved"
+        assert client.get("/escalations/open").json() == []

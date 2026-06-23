@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from gap_kernel.crypto.signing import PublicKeyRegistry
 from gap_kernel.execution.fabric import ExecutionFabric
 from gap_kernel.governance.corrigibility import KillSwitch
+from gap_kernel.governance.integrity_monitor import GovernanceIntegrityMonitor
 from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.governance.profile import ApplicabilityProfile
 
@@ -139,6 +140,13 @@ def create_app(
     )
     config = reconciler_config or ReconcilerConfig()
 
+    # Governance Integrity Monitoring on the shipped autonomous path. In governed
+    # mode the heartbeat gets a monitor and acts on it (block_on_integrity): an
+    # action GIM flags for authorization drift or threshold-avoidance
+    # decomposition is HELD and escalated to a human, not executed. Open mode runs
+    # without a monitor (advisory/none), consistent with its permissive posture.
+    integrity_monitor = GovernanceIntegrityMonitor() if governed else None
+
     reconciler = ReconcilerLoop(
         world_store=ws,
         governance_kernel=gk,
@@ -148,6 +156,8 @@ def create_app(
         config=config,
         default_action_type_id=reconciler_action_type_id if governed else None,
         kill_switch=ks,
+        integrity_monitor=integrity_monitor,
+        block_on_integrity=governed,
     )
 
     # Store components on app state for access in endpoints
@@ -158,6 +168,7 @@ def create_app(
     app.state.execution_fabric = ef
     app.state.reconciler = reconciler
     app.state.kill_switch = ks
+    app.state.integrity_monitor = integrity_monitor
 
     # === INTENT MANAGEMENT ===
 
@@ -307,6 +318,7 @@ def create_app(
             "registered_intents": len(reconciler.get_intents()),
             "tracked_entities": len(ws.model.entities),
             "pending_escalations": len(reconciler.pending_escalations),
+            "open_escalations": len(reconciler.open_escalations),
         }
 
     @app.post("/reconciler/trigger")
@@ -473,8 +485,16 @@ def create_app(
 
     @app.get("/escalations/pending")
     def get_pending_escalations():
-        """Awaiting human decision."""
+        """Awaiting human decision (pending rejections only)."""
         return reconciler.pending_escalations
+
+    @app.get("/escalations/open")
+    def get_open_escalations():
+        """Every escalation still awaiting a human — pending rejections, L2+
+        actions awaiting Out-of-Band approval, AND GIM integrity holds. Without
+        this, held / awaiting-approval items are a dead letter (invisible to the
+        pending-only listing and previously unresolvable)."""
+        return reconciler.open_escalations
 
     @app.post("/escalations/{escalation_id}/resolve")
     def resolve_escalation(escalation_id: str, req: EscalationResolveRequest):

@@ -20,6 +20,7 @@ from uuid import uuid4
 
 from gap_kernel.execution.fabric import ExecutionFabric
 from gap_kernel.governance.corrigibility import KillSwitch
+from gap_kernel.governance.integrity_monitor import GovernanceIntegrityMonitor
 from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.learning.engine import LearningEngine
 from gap_kernel.lineage.store import LineageStore
@@ -164,6 +165,12 @@ class DriftWatcher:
         return None
 
 
+# Escalation statuses that still need a human: a pending rejection escalation, an
+# L2+ action awaiting Out-of-Band approval, or an action held by GIM. All three
+# must be listable and resolvable through the human-facing surface.
+_OPEN_ESCALATION_STATUSES = {"pending", "awaiting_approval", "integrity_hold"}
+
+
 class ReconcilerLoop:
     """
     The Reconciler Loop — GAP's heartbeat.
@@ -183,6 +190,8 @@ class ReconcilerLoop:
         default_action_type_id: Optional[str] = None,
         action_type_classifier: Optional[ActionTypeClassifier] = None,
         kill_switch: Optional[KillSwitch] = None,
+        integrity_monitor: Optional[GovernanceIntegrityMonitor] = None,
+        block_on_integrity: bool = False,
     ):
         self.world_store = world_store
         self.governance = governance_kernel
@@ -190,6 +199,14 @@ class ReconcilerLoop:
         self.lineage_store = lineage_store
         self.learning = learning_engine
         self.config = config or ReconcilerConfig()
+        # Governance Integrity Monitoring on the autonomous heartbeat. ONE monitor
+        # is shared across every CGA loop this reconciler spawns, so it watches the
+        # whole decision stream (authorization drift, threshold-avoidance
+        # decomposition spanning drift events) rather than a single cycle in
+        # isolation. When block_on_integrity is on (governed deployments), an
+        # action GIM flags is HELD and escalated to a human rather than executed.
+        self._integrity_monitor = integrity_monitor
+        self._block_on_integrity = block_on_integrity
         # Corrigibility: GAP's autonomous heartbeat must be haltable. The same
         # human-controlled kill-switch is shared with every CGA loop this
         # reconciler spawns AND with the Execution Fabric; engaging it halts
@@ -221,8 +238,19 @@ class ReconcilerLoop:
 
     @property
     def pending_escalations(self) -> List[dict]:
-        """Get all pending escalations."""
+        """Get all pending (rejection) escalations."""
         return [e for e in self._escalation_queue if e.get("status") == "pending"]
+
+    @property
+    def open_escalations(self) -> List[dict]:
+        """Every escalation still awaiting a human — a pending rejection, an L2+
+        action awaiting Out-of-Band approval, or a GIM integrity_hold. These are
+        what a human must see and resolve; ``pending_escalations`` alone would
+        hide held / awaiting-approval items (a dead letter)."""
+        return [
+            e for e in self._escalation_queue
+            if e.get("status") in _OPEN_ESCALATION_STATUSES
+        ]
 
     def register_intent(self, intent: IntentVector) -> None:
         """Register an intent for reconciliation."""
@@ -283,6 +311,8 @@ class ReconcilerLoop:
             max_attempts=self.config.max_retry_budget,
             action_type_classifier=self._classifier,
             kill_switch=self.kill_switch,
+            integrity_monitor=self._integrity_monitor,
+            block_on_integrity=self._block_on_integrity,
         )
 
         # Run CGA loop
@@ -305,8 +335,12 @@ class ReconcilerLoop:
         # Record drift event in world model
         self.world_store.record_drift_event(drift.to_dict())
 
-        # Update dampening state
-        self._update_dampening(drift.entity_id, cga_result.escalated, current_time)
+        # Update dampening state. An action that was HELD (integrity_hold) did not
+        # succeed and must count toward the circuit breaker — otherwise a held
+        # target would be retried (and re-escalated) every cooldown forever
+        # without the breaker ever tripping.
+        held = cga_result.escalated or cga_result.integrity_hold
+        self._update_dampening(drift.entity_id, held, current_time)
 
         # Operational learning
         self.learning.learn_from_lineage(lineage_record)
@@ -314,8 +348,17 @@ class ReconcilerLoop:
         # Route to a human: either an escalation, OR an L2+ action that governance
         # approved but that is held pending Out-of-Band approval. Without this, an
         # awaiting_approval outcome would be silently dropped (the high-stakes
-        # action neither executes nor reaches a human).
-        if cga_result.escalated or cga_result.awaiting_approval or cga_result.integrity_hold:
+        # action neither executes nor reaches a human). Dedupe: if this entity
+        # already has an OPEN (unresolved) escalation, don't pile on a duplicate
+        # every cycle — one open item per entity until a human resolves it.
+        needs_human = (
+            cga_result.escalated or cga_result.awaiting_approval or cga_result.integrity_hold
+        )
+        already_open = any(
+            e["entity_id"] == drift.entity_id and e["status"] in _OPEN_ESCALATION_STATUSES
+            for e in self._escalation_queue
+        )
+        if needs_human and not already_open:
             escalation = {
                 "id": f"esc_{uuid4().hex[:12]}",
                 "cycle_id": cycle_id,
@@ -393,9 +436,11 @@ class ReconcilerLoop:
     def resolve_escalation(
         self, escalation_id: str, resolution: str, resolver: str
     ) -> Optional[dict]:
-        """Resolve a pending escalation."""
+        """Resolve any OPEN escalation — a pending rejection, an awaiting-approval
+        item, or a GIM integrity_hold — so a held action is not a dead letter."""
         for esc in self._escalation_queue:
-            if esc["id"] == escalation_id and esc["status"] == "pending":
+            if esc["id"] == escalation_id and esc["status"] in _OPEN_ESCALATION_STATUSES:
+                esc["prior_status"] = esc["status"]
                 esc["status"] = "resolved"
                 esc["resolution"] = resolution
                 esc["resolved_by"] = resolver
