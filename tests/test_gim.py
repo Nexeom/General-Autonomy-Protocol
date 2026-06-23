@@ -75,6 +75,29 @@ def test_gim3_signal_survives_later_action():
     assert mon.check_decomposition("acct_99") is not None
 
 
+def test_gim3_clears_after_burst_ages_out():
+    """Recency-relative: a burst trips GIM-3, but once it ages out (a later
+    observation lands more than a window after it) the signal CLEARS — so a
+    target that once tripped is not held forever on the consequential path."""
+    mon = GovernanceIntegrityMonitor(decomposition_count_threshold=3)
+    for i in range(3):
+        mon.observe("task_execution", "L0", target="acct_99", timestamp=T0 + timedelta(seconds=i))
+    assert mon.check_decomposition("acct_99") is not None      # burst fires
+    mon.observe("task_execution", "L0", target="acct_99", timestamp=T0 + timedelta(hours=2))
+    assert mon.check_decomposition("acct_99") is None          # aged out -> clears
+
+
+def test_monitor_observation_stores_are_bounded():
+    """A long-running monitor must not grow without bound — per-key lists are
+    capped at max_history."""
+    mon = GovernanceIntegrityMonitor(max_history=50)
+    for i in range(500):
+        mon.observe("drift_reconciliation", "L1", target="acct_99",
+                    timestamp=T0 + timedelta(seconds=i))
+    assert len(mon._by_target["acct_99"]) <= 50
+    assert len(mon._by_action["drift_reconciliation"]) <= 50
+
+
 def test_gim3_respects_time_window():
     mon = GovernanceIntegrityMonitor(
         decomposition_count_threshold=3, decomposition_window_seconds=300

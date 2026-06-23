@@ -127,6 +127,21 @@ def test_create_app_open_mode_is_permissive_by_default():
     app = create_app()  # no profile -> open mode (logs a warning)
     assert app.state.governance_kernel._strict_action_typing is False
     assert app.state.reconciler._classifier is None
+    # Open mode runs the heartbeat without a monitor (advisory/none).
+    assert app.state.integrity_monitor is None
+    assert app.state.reconciler._integrity_monitor is None
+    assert app.state.reconciler._block_on_integrity is False
+
+
+def test_create_app_governed_wires_consequential_gim_onto_the_heartbeat():
+    """Governed mode wires ONE integrity monitor into the autonomous reconciler
+    and turns block_on_integrity on, so GIM holds fire on the shipped path."""
+    from gap_kernel.api.app import create_app
+    profile, registry = _signed_profile()
+    app = create_app(applicability_profile=profile, profile_key_registry=registry)
+    assert app.state.integrity_monitor is not None
+    assert app.state.reconciler._integrity_monitor is app.state.integrity_monitor
+    assert app.state.reconciler._block_on_integrity is True
 
 
 def test_governed_deployment_blocks_unconfirmed_intent():
