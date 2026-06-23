@@ -25,6 +25,7 @@ from gap_kernel.lineage.store import LineageStore
 from gap_kernel.models.intent import IntentVector
 from gap_kernel.models.reconciler import DampeningState, ReconcilerConfig
 from gap_kernel.models.world import EntityState
+from gap_kernel.governance.action_classifier import ActionTypeClassifier
 from gap_kernel.strategy.cga_loop import CGALoop
 from gap_kernel.world_model.store import WorldModelStore
 
@@ -179,6 +180,7 @@ class ReconcilerLoop:
         learning_engine: LearningEngine,
         config: Optional[ReconcilerConfig] = None,
         default_action_type_id: Optional[str] = None,
+        action_type_classifier: Optional[ActionTypeClassifier] = None,
     ):
         self.world_store = world_store
         self.governance = governance_kernel
@@ -186,13 +188,16 @@ class ReconcilerLoop:
         self.lineage_store = lineage_store
         self.learning = learning_engine
         self.config = config or ReconcilerConfig()
-        # The governance classification the reconciler declares for its own
-        # autonomous drift-correction actions. Required when the kernel runs in
-        # governed mode (strict action typing); otherwise every proposal would be
-        # rejected for an absent action_type_id. (SIR governs the human
-        # intent-transfer at intent *registration*, not per autonomous drift, so
-        # the reconciler's loop is not SIR-gated.)
-        self._default_action_type_id = default_action_type_id
+        # How the reconciler classifies its own autonomous drift-correction
+        # actions into a governance action type (needed under strict typing).
+        # Defaults to a drift_reconciliation classifier (escalating to a
+        # more-restrictive category for sensitive ops); a flat
+        # default_action_type_id sets the base. None => no classification (open).
+        # (SIR governs the human intent-transfer at intent *registration*, not per
+        # autonomous drift, so the reconciler's loop is not SIR-gated.)
+        self._classifier = action_type_classifier
+        if self._classifier is None and default_action_type_id is not None:
+            self._classifier = ActionTypeClassifier(base_action_type=default_action_type_id)
 
         self._intents: Dict[str, IntentVector] = {}
         self._dampening: Dict[str, DampeningState] = {}
@@ -265,6 +270,7 @@ class ReconcilerLoop:
             governance_kernel=self.governance,
             execution_fabric=self.execution,
             max_attempts=self.config.max_retry_budget,
+            action_type_classifier=self._classifier,
         )
 
         # Run CGA loop
@@ -274,7 +280,6 @@ class ReconcilerLoop:
             drift_event=drift.to_dict(),
             world_state=world_state,
             intents=intents,
-            action_type_id=self._default_action_type_id,
         )
 
         # Build and store lineage record

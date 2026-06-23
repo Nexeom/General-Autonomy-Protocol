@@ -129,9 +129,12 @@ aspiration for assurance, which was the baseline's core concern.
    industry-specific policy, which must be configured, from universal primitives,
    which are now enforced. The shipped REST app (`create_app(applicability_profile=…)`)
    and reconciler run governed when a floor is supplied, and log a loud warning when
-   running OPEN. Note: the autonomous reconciler is not SIR-gated per drift — SIR
+   running OPEN. The autonomous reconciler is not SIR-gated per drift — SIR
    governs the human intent-transfer at intent registration, not autonomous
-   drift-correction.)*
+   drift-correction — and it auto-derives its governance action type via an
+   `ActionTypeClassifier` (`drift_reconciliation` base, escalating to a
+   more-restrictive category for sensitive operations), so it no longer relies on
+   a configured default.)*
 2. **Make GIM consequential**: have the loop/reconciler *act* on integrity signals
    (block/escalate) rather than only surface them.
 3. **Re-level the residual spec language** (e.g. the unqualified "No" in the

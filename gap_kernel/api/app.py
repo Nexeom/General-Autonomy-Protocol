@@ -88,7 +88,7 @@ def create_app(
     reconciler_config: Optional[ReconcilerConfig] = None,
     applicability_profile: Optional[ApplicabilityProfile] = None,
     profile_key_registry: Optional[PublicKeyRegistry] = None,
-    reconciler_action_type_id: str = "task_execution",
+    reconciler_action_type_id: str = "drift_reconciliation",
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
