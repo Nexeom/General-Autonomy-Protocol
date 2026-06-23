@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Protocol
 from uuid import uuid4
 
+from gap_kernel.errors import GovernanceConfigError
 from gap_kernel.execution.fabric import _OOB_REQUIRED_LEVELS, ExecutionFabric
 from gap_kernel.governance.integrity_monitor import GovernanceIntegrityMonitor
 from gap_kernel.governance.kernel import GovernanceKernel
@@ -264,6 +265,7 @@ class CGALoop:
         max_attempts: int = 3,
         intent_resolver: Optional[StructuredIntentResolver] = None,
         integrity_monitor: Optional[GovernanceIntegrityMonitor] = None,
+        governed: bool = False,
     ):
         self.governance = governance_kernel
         self.execution = execution_fabric
@@ -273,6 +275,9 @@ class CGALoop:
         # optional, opt-in hooks. When a resolver is needed it is created lazily.
         self.intent_resolver = intent_resolver
         self.integrity_monitor = integrity_monitor
+        # Governed mode makes the SIR intent-transfer gate mandatory: run() must
+        # be given a resolved intent declaration, or it refuses (fail closed).
+        self._governed = governed
 
     def run(
         self,
@@ -282,6 +287,7 @@ class CGALoop:
         intents: Optional[List[IntentVector]] = None,
         intent_declaration: Optional[IntentDeclaration] = None,
         standing: Optional[StandingIntentDeclaration] = None,
+        action_type_id: Optional[str] = None,
     ) -> CGAResult:
         """
         Run the full CGA loop for a drift event.
@@ -296,6 +302,13 @@ class CGALoop:
         """
         if intents is None:
             intents = [intent]
+
+        # Governed mode: the SIR intent-transfer gate is mandatory.
+        if self._governed and intent_declaration is None:
+            raise GovernanceConfigError(
+                "A governed CGA loop requires a resolved intent declaration "
+                "(SIR) before it will engage; refusing to plan ungoverned."
+            )
 
         # SIR gate: govern the intent-transfer moment before any action is planned.
         if intent_declaration is not None:
@@ -342,6 +355,7 @@ class CGALoop:
                 proposal=proposal,
                 intents=intents,
                 world_state=world_state,
+                action_type_id=action_type_id,
             )
             decisions.append(decision)
 
@@ -453,6 +467,12 @@ class CGAResult:
         self.execution_result = execution_result
         self.total_attempts = total_attempts
         self.escalated = escalated
+
+    @property
+    def awaiting_approval(self) -> bool:
+        """True when an L2+ action was approved by governance but is held pending a
+        human Out-of-Band approval — it must reach a human, not be silently dropped."""
+        return self.final_verdict == "awaiting_approval"
 
     def build_lineage_record(
         self,

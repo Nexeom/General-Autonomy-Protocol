@@ -60,6 +60,7 @@ class LineageStore:
         """Deterministic, signature-excluded serialization that is signed/verified."""
         record_dict = record.model_dump(mode="json")
         record_dict["signature"] = ""
+        record_dict["_domain"] = "gap.lineage_record.v1"
         return json.dumps(record_dict, sort_keys=True, default=str)
 
     def _init_schema(self) -> None:

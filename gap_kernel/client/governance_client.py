@@ -39,6 +39,7 @@ def _evaluate_request(
     intents: List[IntentVector],
     world_state: WorldModel,
     action_type_id: Optional[str],
+    current_time: Optional[datetime] = None,
 ) -> dict:
     return {
         "method": "evaluate",
@@ -46,6 +47,7 @@ def _evaluate_request(
         "intents": [i.model_dump(mode="json") for i in intents],
         "world_state": world_state.model_dump(mode="json"),
         "action_type_id": action_type_id,
+        "current_time": current_time.isoformat() if current_time else None,
     }
 
 
@@ -77,7 +79,7 @@ class InProcessGovernanceClient:
         action_type_id: Optional[str] = None,
     ) -> GovernanceDecision:
         response = self._handle(
-            _evaluate_request(proposal, intents, world_state, action_type_id)
+            _evaluate_request(proposal, intents, world_state, action_type_id, current_time)
         )
         if not response.get("ok"):
             raise GovernanceClientError(response.get("error"))
@@ -147,7 +149,7 @@ class SubprocessGovernanceClient:
         action_type_id: Optional[str] = None,
     ) -> GovernanceDecision:
         response = self._call(
-            _evaluate_request(proposal, intents, world_state, action_type_id)
+            _evaluate_request(proposal, intents, world_state, action_type_id, current_time)
         )
         return GovernanceDecision.model_validate(response["decision"])
 
@@ -168,3 +170,11 @@ class SubprocessGovernanceClient:
 
     def __exit__(self, *exc):
         self.close()
+
+    def __del__(self):
+        # Defensive cleanup if the caller forgot close()/the context manager.
+        try:
+            if getattr(self, "_proc", None) is not None:
+                self.close()
+        except Exception:
+            pass

@@ -63,6 +63,7 @@ def test_l2_approval_is_not_auto_executed():
                    strategy_generator=_FixedRiskGenerator(risk=6))
     result = loop.run(intent=_intent(), drift_event={}, world_state=_world())
     assert result.final_verdict == "awaiting_approval"
+    assert result.awaiting_approval is True
     assert result.execution_result is None
     assert result.decisions[-1].authorization_level == AuthorizationLevel.L2
 

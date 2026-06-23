@@ -11,6 +11,7 @@ Exposes the kernel's functionality via a REST API for:
 - Escalation handling
 """
 
+import logging
 from datetime import datetime
 from typing import List, Optional
 from uuid import uuid4
@@ -18,8 +19,12 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from gap_kernel.crypto.signing import PublicKeyRegistry
 from gap_kernel.execution.fabric import ExecutionFabric
 from gap_kernel.governance.kernel import GovernanceKernel
+from gap_kernel.governance.profile import ApplicabilityProfile
+
+logger = logging.getLogger("gap_kernel.api")
 from gap_kernel.learning.engine import LearningEngine
 from gap_kernel.lineage.store import LineageStore
 from gap_kernel.models.governance import GovernanceDecision
@@ -81,8 +86,19 @@ def create_app(
     lineage_store: Optional[LineageStore] = None,
     learning_engine: Optional[LearningEngine] = None,
     reconciler_config: Optional[ReconcilerConfig] = None,
+    applicability_profile: Optional[ApplicabilityProfile] = None,
+    profile_key_registry: Optional[PublicKeyRegistry] = None,
+    reconciler_action_type_id: str = "task_execution",
 ) -> FastAPI:
-    """Create and configure the FastAPI application."""
+    """Create and configure the FastAPI application.
+
+    Pass an ``applicability_profile`` (+ ``profile_key_registry``) to run the app
+    in **governed** mode: the kernel verifies the signed regulatory floor and runs
+    with strict action typing, and the reconciler classifies its autonomous
+    actions under ``reconciler_action_type_id``. Without a profile the app runs in
+    OPEN mode (a loud warning is logged) — fine for prototyping/embedding, not for
+    a production deployment that requires a regulatory floor.
+    """
 
     app = FastAPI(
         title="GAP Kernel API",
@@ -92,7 +108,22 @@ def create_app(
 
     # Initialize components
     ws = world_store or WorldModelStore()
-    gk = governance_kernel or GovernanceKernel()
+    governed = applicability_profile is not None
+    if governance_kernel is not None:
+        gk = governance_kernel
+    elif governed:
+        gk = GovernanceKernel(
+            governed=True,
+            applicability_profile=applicability_profile,
+            profile_key_registry=profile_key_registry,
+        )
+    else:
+        gk = GovernanceKernel()
+        logger.warning(
+            "GAP API is running in OPEN mode: no Applicability Profile (regulatory "
+            "floor) supplied and strict action typing is off. Not suitable for a "
+            "production deployment — pass applicability_profile to run governed."
+        )
     ls = lineage_store or LineageStore()
     le = learning_engine or LearningEngine()
     # Fail closed: the fabric verifies the kernel's signature on every decision.
@@ -106,6 +137,7 @@ def create_app(
         lineage_store=ls,
         learning_engine=le,
         config=config,
+        default_action_type_id=reconciler_action_type_id if governed else None,
     )
 
     # Store components on app state for access in endpoints

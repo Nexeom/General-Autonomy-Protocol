@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime
 from typing import Optional, TextIO
 
 from gap_kernel.governance.kernel import GovernanceKernel
@@ -44,10 +45,14 @@ class GovernanceService:
                 proposal = StrategyProposal.model_validate(request["proposal"])
                 intents = [IntentVector.model_validate(i) for i in request["intents"]]
                 world = WorldModel.model_validate(request["world_state"])
+                current_time = request.get("current_time")
+                if current_time:
+                    current_time = datetime.fromisoformat(current_time)
                 decision = self._kernel.evaluate_proposal(
                     proposal=proposal,
                     intents=intents,
                     world_state=world,
+                    current_time=current_time,
                     action_type_id=request.get("action_type_id"),
                 )
                 return {"ok": True, "decision": decision.model_dump(mode="json")}

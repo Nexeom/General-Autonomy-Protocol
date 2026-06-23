@@ -23,6 +23,7 @@ from uuid import uuid4
 from croniter import croniter
 
 from gap_kernel.crypto.signing import PublicKeyRegistry, generate_keypair, sign
+from gap_kernel.errors import GovernanceConfigError
 from gap_kernel.governance.dynamic_risk import (
     DynamicRiskEngine,
     EscalationConfig,
@@ -46,7 +47,7 @@ from gap_kernel.models.intent import (
     PolicyActivation,
     PolicyTier,
 )
-from gap_kernel.models.strategy import StrategyProposal
+from gap_kernel.models.strategy import StrategyProposal, compute_proposal_digest
 from gap_kernel.models.world import WorldModel
 
 
@@ -499,7 +500,18 @@ class GovernanceKernel:
         signing_key_hex: Optional[str] = None,
         public_key_hex: Optional[str] = None,
         kernel_key_id: str = "governance_kernel",
+        governed: bool = False,
     ):
+        # Governed mode fails closed: it REQUIRES the industry-specific regulatory
+        # floor (an Applicability Profile) and forces strict action typing. A
+        # deployment that declares itself governed but supplies no floor must not
+        # run open. (The floor's *content* is industry-specific; requiring one is
+        # universal.)
+        if governed and applicability_profile is None:
+            raise GovernanceConfigError(
+                "A governed GovernanceKernel requires an Applicability Profile "
+                "(the regulatory floor); refusing to run ungoverned."
+            )
         self._action_type_registry: Dict[str, ActionTypeSpec] = dict(_BASELINE_ACTION_TYPES)
         self._dynamic_risk_engine = DynamicRiskEngine(
             escalation_config or EscalationConfig()
@@ -519,7 +531,9 @@ class GovernanceKernel:
         # the bypass where omitting the field skipped the Action Type Registry
         # gate entirely. Defaults False to preserve open-deployment behavior; a
         # loaded Applicability Profile flips this on (the floor is now declared).
-        self._strict_action_typing = strict_action_typing or applicability_profile is not None
+        self._strict_action_typing = (
+            strict_action_typing or applicability_profile is not None or governed
+        )
 
         # Tier-1 regulatory floor (Fix 3). Loaded from a SIGNED Applicability
         # Profile and verified here; an unsigned/tampered/unknown-key profile is
@@ -688,6 +702,9 @@ class GovernanceKernel:
         decision = self._evaluate(
             proposal, intents, world_state, current_time, action_type_id
         )
+        # Bind the decision to the exact proposal it authorizes (content digest),
+        # then sign — so a same-id proposal with mutated actions is rejected.
+        decision.proposal_digest = compute_proposal_digest(proposal)
         return self._sign_decision(decision)
 
     def _evaluate(

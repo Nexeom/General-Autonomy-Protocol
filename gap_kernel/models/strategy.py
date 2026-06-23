@@ -1,5 +1,7 @@
 """Strategy Proposal — what the Strategy Layer submits to Governance."""
 
+import hashlib
+import json
 from datetime import datetime
 from typing import List, Optional
 
@@ -29,3 +31,20 @@ class StrategyProposal(BaseModel):
     rationale: str                          # Why this plan was chosen
     prior_rejection_id: Optional[str] = None  # If retry, which rejection prompted this
     generated_at: datetime
+
+
+def compute_proposal_digest(proposal: "StrategyProposal") -> str:
+    """A content digest binding a decision to the exact proposal it authorizes.
+
+    The Governance Kernel stores this in the signed decision and the Execution
+    Fabric re-checks it, so a proposal with the same id but mutated action content
+    cannot be executed under a decision rendered for a different payload.
+
+    Binds the execution-relevant content (id, intent, actions, cost) and excludes
+    purely volatile metadata (``generated_at``), so a regenerated-but-identical
+    proposal still matches while any change to what will be executed does not.
+    """
+    data = proposal.model_dump(mode="json", exclude={"generated_at"})
+    return hashlib.sha256(
+        json.dumps(data, sort_keys=True, default=str).encode()
+    ).hexdigest()

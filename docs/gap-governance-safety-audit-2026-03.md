@@ -13,7 +13,7 @@
 | **Version Audited** | Commit `2b0b5d4` on branch `claude/gap-kernel-implementation-25Zt0` |
 | **Auditor Context** | Independent assessment requested by protocol author. Evidence-based evaluation of governance design and safe-autonomy properties. |
 | **Assessment Type** | Governance posture + safe-autonomy readiness |
-| **Status** | Baseline audit complete. Cross-reference with 8 related Nexeom repositories completed June 2026 — see CROSS-REFERENCE. |
+| **Status** | Baseline audit complete. Cross-reference with 8 related Nexeom repositories completed June 2026 — see CROSS-REFERENCE. **Superseded by the post-remediation re-audit: [`gap-governance-safety-audit-2026-06.md`](gap-governance-safety-audit-2026-06.md)** (re-scores every finding below against the built remediation). |
 
 ---
 

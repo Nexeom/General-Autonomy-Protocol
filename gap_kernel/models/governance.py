@@ -136,6 +136,11 @@ class GovernanceDecision(BaseModel):
     decision_signature: Optional[str] = None
     kernel_public_key_id: Optional[str] = None
 
+    # Content binding (re-audit fix): a digest of the proposal this decision
+    # authorizes, so a same-id proposal with mutated actions cannot be executed
+    # under it. Set by the kernel, re-checked by the Execution Fabric.
+    proposal_digest: Optional[str] = None
+
 
 def canonical_decision_payload(decision: "GovernanceDecision") -> str:
     """Deterministic serialization the kernel signs and the Execution Fabric verifies.
@@ -144,7 +149,8 @@ def canonical_decision_payload(decision: "GovernanceDecision") -> str:
     attestations (OOB fields), which are added *after* the kernel rules and are
     verified separately — so the kernel signature stays stable across the
     approval flow while still binding the verdict, authorization level, violated
-    constraints, and uncertainty.
+    constraints, uncertainty, and the proposal digest. Carries a domain tag so a
+    signature over this format cannot be confused with another signed payload.
     """
     data = decision.model_dump(
         mode="json",
@@ -160,4 +166,5 @@ def canonical_decision_payload(decision: "GovernanceDecision") -> str:
             "human_approval_valid_until",
         },
     )
+    data["_domain"] = "gap.governance.decision.v1"
     return json.dumps(data, sort_keys=True, default=str)
