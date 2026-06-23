@@ -301,7 +301,7 @@ def test_governed_deployment_always_has_a_killswitch():
 
     loop = build_governed_deployment(
         applicability_profile=profile, profile_key_registry=registry,
-        world_model=_world(), strategy_generator=_CountingGen(),
+        world_model=_world(), strategy_generator=_CountingGen(), isolated=False,
     )
     # A governed deployment is never without corrigibility.
     assert loop.kill_switch is not None
