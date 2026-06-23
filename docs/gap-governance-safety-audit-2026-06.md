@@ -127,8 +127,11 @@ aspiration for assurance, which was the baseline's core concern.
    governed posture that requires the industry regulatory floor and forces on
    signature verification, strict action typing, and the SIR gate — distinguishing
    industry-specific policy, which must be configured, from universal primitives,
-   which are now enforced. Remaining: wire it into the shipped REST app / reconciler
-   as their default assembly.)*
+   which are now enforced. The shipped REST app (`create_app(applicability_profile=…)`)
+   and reconciler run governed when a floor is supplied, and log a loud warning when
+   running OPEN. Note: the autonomous reconciler is not SIR-gated per drift — SIR
+   governs the human intent-transfer at intent registration, not autonomous
+   drift-correction.)*
 2. **Make GIM consequential**: have the loop/reconciler *act* on integrity signals
    (block/escalate) rather than only surface them.
 3. **Re-level the residual spec language** (e.g. the unqualified "No" in the

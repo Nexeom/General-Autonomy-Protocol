@@ -110,6 +110,23 @@ def test_governed_deployment_runs_end_to_end():
     assert result.execution_result is not None and result.execution_result.success
 
 
+def test_create_app_governed_mode_loads_floor_and_strict_typing():
+    from gap_kernel.api.app import create_app
+    profile, registry = _signed_profile()
+    app = create_app(applicability_profile=profile, profile_key_registry=registry)
+    gk = app.state.governance_kernel
+    assert gk._strict_action_typing is True
+    assert len(gk._tier1_floor) == 1  # the signed regulatory floor was loaded
+    assert app.state.reconciler._default_action_type_id == "task_execution"
+
+
+def test_create_app_open_mode_is_permissive_by_default():
+    from gap_kernel.api.app import create_app
+    app = create_app()  # no profile -> open mode (logs a warning)
+    assert app.state.governance_kernel._strict_action_typing is False
+    assert app.state.reconciler._default_action_type_id is None
+
+
 def test_governed_deployment_blocks_unconfirmed_intent():
     profile, registry = _signed_profile()
     loop = build_governed_deployment(

@@ -178,6 +178,7 @@ class ReconcilerLoop:
         lineage_store: LineageStore,
         learning_engine: LearningEngine,
         config: Optional[ReconcilerConfig] = None,
+        default_action_type_id: Optional[str] = None,
     ):
         self.world_store = world_store
         self.governance = governance_kernel
@@ -185,6 +186,13 @@ class ReconcilerLoop:
         self.lineage_store = lineage_store
         self.learning = learning_engine
         self.config = config or ReconcilerConfig()
+        # The governance classification the reconciler declares for its own
+        # autonomous drift-correction actions. Required when the kernel runs in
+        # governed mode (strict action typing); otherwise every proposal would be
+        # rejected for an absent action_type_id. (SIR governs the human
+        # intent-transfer at intent *registration*, not per autonomous drift, so
+        # the reconciler's loop is not SIR-gated.)
+        self._default_action_type_id = default_action_type_id
 
         self._intents: Dict[str, IntentVector] = {}
         self._dampening: Dict[str, DampeningState] = {}
@@ -266,6 +274,7 @@ class ReconcilerLoop:
             drift_event=drift.to_dict(),
             world_state=world_state,
             intents=intents,
+            action_type_id=self._default_action_type_id,
         )
 
         # Build and store lineage record
