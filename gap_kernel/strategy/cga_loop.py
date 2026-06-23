@@ -268,6 +268,7 @@ class CGALoop:
         integrity_monitor: Optional[GovernanceIntegrityMonitor] = None,
         governed: bool = False,
         action_type_classifier: Optional[ActionTypeClassifier] = None,
+        block_on_integrity: bool = False,
     ):
         self.governance = governance_kernel
         self.execution = execution_fabric
@@ -283,6 +284,11 @@ class CGALoop:
         # Governed mode makes the SIR intent-transfer gate mandatory: run() must
         # be given a resolved intent declaration, or it refuses (fail closed).
         self._governed = governed
+        # When set (on by default in governed mode), an approved action is HELD
+        # and escalated to a human if GIM flags authorization drift or
+        # threshold-avoidance decomposition for it — making integrity signals
+        # consequential rather than advisory.
+        self._block_on_integrity = block_on_integrity or governed
 
     def run(
         self,
@@ -379,6 +385,13 @@ class CGALoop:
             if decision.verdict == GovernanceVerdict.APPROVED:
                 approved_proposal = proposal
 
+                # 3a. Integrity hold (GIM consequential): if the monitor flags
+                #     authorization drift or threshold-avoidance decomposition for
+                #     this action, do NOT execute — hold and escalate to a human.
+                if self._block_on_integrity and self._integrity_hold(decision, proposal):
+                    final_verdict = "integrity_hold"
+                    break
+
                 # 4. L2+ ("Approve Before" and above) must not auto-execute — a
                 #    human Out-of-Band approval is required first. Surface these
                 #    as awaiting approval; the operator obtains a signature off
@@ -424,6 +437,18 @@ class CGALoop:
                 self.integrity_monitor.scan() if self.integrity_monitor is not None else []
             ),
         )
+
+    def _integrity_hold(self, decision: GovernanceDecision, proposal: StrategyProposal) -> bool:
+        """True if GIM flags drift or decomposition for this (already-observed) action."""
+        if self.integrity_monitor is None:
+            return False
+        action_type = decision.action_type_id or "unspecified"
+        if self.integrity_monitor.check_authorization_drift(action_type) is not None:
+            return True
+        target = proposal.actions[0].target if proposal.actions else None
+        if target and self.integrity_monitor.check_decomposition(target) is not None:
+            return True
+        return False
 
     def approve_and_execute(
         self,
@@ -484,6 +509,12 @@ class CGAResult:
         """True when an L2+ action was approved by governance but is held pending a
         human Out-of-Band approval — it must reach a human, not be silently dropped."""
         return self.final_verdict == "awaiting_approval"
+
+    @property
+    def integrity_hold(self) -> bool:
+        """True when an approved action was HELD because GIM flagged a governance-
+        integrity signal (drift / threshold-avoidance) for it — routed to a human."""
+        return self.final_verdict == "integrity_hold"
 
     def build_lineage_record(
         self,

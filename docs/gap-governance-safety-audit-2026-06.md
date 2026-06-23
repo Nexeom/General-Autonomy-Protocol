@@ -136,9 +136,15 @@ aspiration for assurance, which was the baseline's core concern.
    more-restrictive category for sensitive operations), so it no longer relies on
    a configured default.)*
 2. **Make GIM consequential**: have the loop/reconciler *act* on integrity signals
-   (block/escalate) rather than only surface them.
+   (block/escalate) rather than only surface them. *(Addressed: in governed mode
+   the loop now HOLDS an action GIM flags (drift / threshold-avoidance) and routes
+   it to a human — `CGALoop(block_on_integrity=…)`, on by default when governed;
+   the reconciler queues it as `integrity_hold`. `tests/test_integration.py`.)*
 3. **Re-level the residual spec language** (e.g. the unqualified "No" in the
-   specification) to match the conformance statement.
+   specification) to match the conformance statement. *(Addressed:
+   `PROTOCOL_SPECIFICATION.md` now states the regulatory-floor guarantee as
+   *structural relative to the signed floor* — not a guarantee of legal
+   correctness — and points to the conformance statement.)*
 4. **Build the deferred mechanisms with their infrastructure**: independent-model
    GIM (GIM-2/4/5), agent-level corrigibility/shutdown, and a multi-agent
    governance surface — deliberately, not as stubs.

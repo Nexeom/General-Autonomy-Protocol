@@ -97,3 +97,26 @@ def test_gim_observes_decisions_and_surfaces_signals():
         intent=_intent(), drift_event={}, world_state=_world()
     )
     assert any(s.signal_type == "GIM-3" for s in result.integrity_signals)
+
+
+def test_loop_holds_and_escalates_on_integrity_signal():
+    """GIM consequential: when block_on_integrity is on, an action GIM flags is
+    HELD (not executed) and surfaced for a human."""
+    monitor = GovernanceIntegrityMonitor(decomposition_count_threshold=1)
+    result = _loop(integrity_monitor=monitor, block_on_integrity=True).run(
+        intent=_intent(), drift_event={}, world_state=_world()
+    )
+    assert result.final_verdict == "integrity_hold"
+    assert result.integrity_hold is True
+    assert result.execution_result is None
+
+
+def test_gim_is_advisory_without_block():
+    """Without block_on_integrity, GIM stays advisory — signals surface but the
+    action still executes (backward-compatible default)."""
+    monitor = GovernanceIntegrityMonitor(decomposition_count_threshold=1)
+    result = _loop(integrity_monitor=monitor).run(  # block_on_integrity defaults False
+        intent=_intent(), drift_event={}, world_state=_world()
+    )
+    assert result.final_verdict == "approved"
+    assert any(s.signal_type == "GIM-3" for s in result.integrity_signals)

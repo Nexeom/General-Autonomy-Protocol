@@ -303,7 +303,7 @@ class ReconcilerLoop:
         # approved but that is held pending Out-of-Band approval. Without this, an
         # awaiting_approval outcome would be silently dropped (the high-stakes
         # action neither executes nor reaches a human).
-        if cga_result.escalated or cga_result.awaiting_approval:
+        if cga_result.escalated or cga_result.awaiting_approval or cga_result.integrity_hold:
             escalation = {
                 "id": f"esc_{uuid4().hex[:12]}",
                 "cycle_id": cycle_id,
@@ -318,7 +318,9 @@ class ReconcilerLoop:
                     if d.rejection_reason
                 ],
                 "status": (
-                    "awaiting_approval" if cga_result.awaiting_approval else "pending"
+                    "awaiting_approval" if cga_result.awaiting_approval
+                    else "integrity_hold" if cga_result.integrity_hold
+                    else "pending"
                 ),
                 "created_at": current_time.isoformat(),
             }
