@@ -214,3 +214,35 @@ explicitly marked. What remains is genuinely infrastructure- and
 deployment-dependent (independent-*model* evaluators, a distributed sub-agent
 fabric, default-governed wiring, hardware isolation, Reconciler Tiers 1–3, SIR-2)
 — deferred, disclosed, and not stubbed.
+
+---
+
+## FRONTIER WAVE — closing the in-repo residuals (2026-06-23)
+
+After the closing re-audit, the three highest-leverage *in-repo* residuals it
+named were built (each its own adversarially-reviewed PR), further lifting the
+findings above:
+
+| Item | PR | Finding lift |
+|---|---|---|
+| **Default process isolation** | #17 | **G-2** — the out-of-process boundary is now the *default* for the governed path (`build_governed_deployment` / `create_app` run the kernel, with its signing key, in a child process by default; `isolated=False` opt-out). The prior G-2 residual was specifically "the boundary is opt-in / the live app uses the in-process kernel." |
+| **Self-evolution capability-gain monitor** | #18 | **SA-4** — the "self-evolution capability-gain has no dynamic monitor" sub-gap is closed: `SelfEvolutionMonitor` (velocity / privilege-accrual / surface) holds a self-modification consequentially when the agent is in a flagged pattern, over *realized* modifications. |
+| **Regulatory-category evaluators** | #19 | **G-1 / SA-5** — concrete evaluators now cover **7 of 8** categories (was 3): transparency, anti-discrimination, financial AML, healthcare minimum-necessary, safety — each a structural gate with per-category adversarial tests, narrowing the floor's coverage gap. |
+
+Each review surfaced and fixed real defects before merge — most notably: the
+isolation client leaked a temp file on a failed spawn (now deterministic cleanup);
+the self-evolution monitor counted *approved-but-unexecuted* self-mods as realized
+gain (now counts only on execution); the AML/PHI evaluators *crashed* on malformed
+input and parsed thresholds by first-match from free text, mistaking a "45 CFR"
+citation for a threshold (now a structured `Constraint.threshold` field, fail-closed
+coercion). Suite: **336 passing**.
+
+**Honestly remaining (Normative / Planned, not stubbed):** independent-*model* GIM
+evaluators; an out-of-process / separately-keyed GIM with a human-only reporting
+channel (the deeper half of G-3); GIM-4 framing telemetry fed on the shipped path
+(G-4); a distributed sub-agent fabric and live-executor wiring of the sub-agent
+registry; coverage / mutation / fuzz quantification (SA-5); IP/content (Cat 8) as a
+kernel evaluator versus provenance tracking; SIR-2 meta-intent inference; Reconciler
+Tiers 1–3; hardware/OS-sandbox isolation; and a semantic (model-level) capability
+measurement for SA-4. These have genuine infrastructure dependencies and are
+disclosed in `CONFORMANCE.md` rather than simulated.
