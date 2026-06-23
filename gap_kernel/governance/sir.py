@@ -17,6 +17,7 @@ defines what must be captured/confirmed, not how to infer it.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import Callable, List, Optional
 from uuid import uuid4
@@ -56,14 +57,98 @@ class StandingIntentError(Exception):
     """Raised when a Standing Intent Declaration is invalid or ungoverned."""
 
 
-def _default_meta_intent(stated_intent: str) -> MetaIntent:
-    """A placeholder meta-intent inference (SIR-2 is pluggable)."""
+# SIR-2 keyword signals (deterministic heuristics). A model-based inferencer is the
+# richer, pluggable alternative (Normative / Planned).
+_IRREVERSIBLE = (
+    "delete", "destroy", "wipe", "purge", "erase", "terminate", "decommission",
+    "shut down", "shutdown", "wire", "transfer fund", "send fund", "permanent",
+    "irreversible", "liquidate",
+)
+_SENSITIVE = (
+    "medical", "health", "patient", "diagnos", "clinical", "legal", "lending",
+    "loan", "credit", "mortgage", "hire", "fire", "termination", "employment",
+    "insurance", "minor", "child", "biometric",
+)
+_ROUTINE = ("read", "query", "list", "summari", "check", "view", "look up", "lookup", "fetch")
+_DOMAIN_VALUES = {
+    "financial_integrity": ("financial", "payment", "wire", "transfer", "invoice", "money", "fund", "transaction"),
+    "data_privacy": ("privacy", "personal data", "pii", "gdpr", "consent", "biometric"),
+    "non_discrimination": ("hire", "fire", "lending", "loan", "credit", "housing", "applicant"),
+    "patient_safety": ("medical", "health", "patient", "clinical", "diagnos"),
+}
+_DOMAIN_STAKEHOLDERS = {
+    "customers": ("customer", "client", "lead", "subscriber"),
+    "patients": ("patient", "health", "medical", "clinical"),
+    "employees": ("employee", "staff", "hire", "fire", "worker", "applicant"),
+    "general_public": ("public", "everyone", "all users", "broadcast", "publish"),
+}
+
+
+def _ordered_unique(items):
+    seen = []
+    for x in items:
+        if x not in seen:
+            seen.append(x)
+    return seen
+
+
+def _signal(text: str, keywords) -> bool:
+    """Word-boundary-anchored keyword match: a keyword matches at the START of a
+    word (so a stem like 'summari' matches 'summarize' and 'transfer' matches
+    'transfers'), but NOT mid-word — so 'view' does not match inside
+    'preview'/'overview'/'review', 'read' inside 'already', 'list' inside 'enlist'.
+    Multiword phrases ('look up') match as substrings."""
+    for k in keywords:
+        if " " in k:
+            if k in text:
+                return True
+        elif re.search(r"\b" + re.escape(k), text):
+            return True
+    return False
+
+
+def infer_meta_intent(stated_intent: str) -> MetaIntent:
+    """SIR-2 meta-intent inference: derive the values motivating a request from the
+    stated intent via deterministic keyword heuristics — risk tolerance lowered by
+    irreversible / sensitive-domain signals and raised for routine reads, a
+    value hierarchy weighted by the domain, and stakeholders inferred from the text.
+    Unlike a fixed placeholder, the result actually reflects the stated intent. A
+    model-based inferencer is the pluggable, richer alternative (Normative/Planned)."""
+    text = (stated_intent or "").lower()
+    irreversible = _signal(text, _IRREVERSIBLE)
+    sensitive = _signal(text, _SENSITIVE)
+
+    if irreversible or sensitive:
+        risk_tolerance = "low"
+    elif _signal(text, _ROUTINE):
+        risk_tolerance = "high"
+    else:
+        risk_tolerance = "moderate"
+
+    # Safety and regulatory compliance always outrank the goal; domain values next.
+    values = ["safety", "regulatory_compliance"]
+    for value, keywords in _DOMAIN_VALUES.items():
+        if _signal(text, keywords):
+            values.append(value)
+    values.append("user_benefit")
+
+    stakeholders = ["requesting_user"]
+    for who, keywords in _DOMAIN_STAKEHOLDERS.items():
+        if _signal(text, keywords):
+            stakeholders.append(who)
+    if irreversible:
+        stakeholders.append("parties_affected_by_irreversible_action")
+
     return MetaIntent(
         primary_objective=f"Fulfil the stated intent: {stated_intent}",
-        value_hierarchy=["safety", "regulatory_compliance", "user_benefit"],
-        risk_tolerance="moderate",
-        stakeholder_impact=["requesting_user"],
+        value_hierarchy=_ordered_unique(values),
+        risk_tolerance=risk_tolerance,
+        stakeholder_impact=_ordered_unique(stakeholders),
     )
+
+
+# Backward-compatible alias (the resolver's default inferencer).
+_default_meta_intent = infer_meta_intent
 
 
 class StructuredIntentResolver:
