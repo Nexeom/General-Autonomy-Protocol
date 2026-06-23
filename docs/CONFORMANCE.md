@@ -33,7 +33,8 @@ standard. Read this matrix for the implementation's earned status.**
 | **L2+ approval gating** — L2+ decisions are not auto-executed; execution requires an attached human approval (Fix 4 supply side) | ✅ Implemented & Verified | `strategy/cga_loop.py` (`approve_and_execute`) → `tests/test_approval_gating.py` |
 | **Tamper-evident decision lineage** — Ed25519-signed, hash-chained; tampering is detected and cannot be re-sealed without the lineage key (Fix 5) | ✅ Implemented & Verified | `lineage/store.py` → `tests/test_lineage.py` (incl. tamper / recompute-forgery / broken-link) |
 | **Governance Integrity Monitoring** — GIM-1 (authorization drift) + GIM-3 (threshold-avoidance decomposition), independent rule-based detectors (Fix 6) | 🟡 Partial | `governance/integrity_monitor.py` → `tests/test_gim.py`; wired into the CGA loop so every decision is observed and signals surface on the result; in **governed mode the loop holds and escalates** an action GIM flags (`block_on_integrity`), making signals consequential rather than advisory (`tests/test_integration.py`). GIM-2 / GIM-4 / GIM-5 and a separate-model classifier are **Normative / Planned**. |
-| **Default-safe governed deployment** — a fail-closed posture that REQUIRES the industry-specific regulatory floor and forces on the universal primitives (kernel-signature verification, strict action typing, the SIR gate) | ✅ Implemented & Verified | `governance/deployment.py` `build_governed_deployment()` + `governed=True` on the kernel and loop → `tests/test_deployment.py`. The floor's *content* is industry-specific (deployment config); *requiring* one is universal (enforced — refuses to run without it). The open/prototype constructors remain permissive by design. |
+| **Default-safe governed deployment** — a fail-closed posture that REQUIRES the industry-specific regulatory floor and forces on the universal primitives (kernel-signature verification, strict action typing, the SIR gate, a corrigibility kill-switch) | ✅ Implemented & Verified | `governance/deployment.py` `build_governed_deployment()` + `governed=True` on the kernel and loop → `tests/test_deployment.py`. The floor's *content* is industry-specific (deployment config); *requiring* one is universal (enforced — refuses to run without it). The open/prototype constructors remain permissive by design. |
+| **Corrigibility / kill-switch** — a human-engaged switch halts the system: the Execution Fabric refuses to dispatch (raising `KillSwitchEngaged`, fail closed, checked first) and the CGA loop refuses to plan, returning a clean `halted` result; CGA does **not** re-plan a path around a halt, including by retargeting. Scoped global or per-entity, and wired through GAP's autonomous heartbeat — the `ReconcilerLoop` and the REST API share one switch (`app.state.kill_switch`) across the loop and fabric (SA-4) | 🟡 Partial | `governance/corrigibility.py` (`KillSwitch`), `execution/fabric.py` (halt check + `KillSwitchEngaged`), `strategy/cga_loop.py` (scope-aware halt, no-retarget), `reconciler/loop.py` + `api/app.py` (shared switch) → `tests/test_corrigibility.py`. **Honestly scoped:** the engage/disengage actor is a free-text label, **not** cryptographically authenticated, and the audit log is in-memory (production binds an operator identity and persists/append-only-signs the log); agent-level corrigibility for sub-agents/multi-agent topologies is **Normative / Planned**. The structural property — the strategy layer holds no reference to the switch and cannot disengage it — *is* verified. |
 | **CGA cannot negotiate around a hard constraint** — re-plan within bounds or escalate, never bypass (SA-1 / SA-5) | ✅ Implemented & Verified | `strategy/cga_loop.py` → `tests/test_adversarial.py` |
 | **Structured Uncertainty / Decision Records** | ✅ Implemented & Verified | `models/governance.py`, `governance/kernel.py` → `tests/test_spec_20260220.py` |
 | **Reconciler Tiers 1–3** (ML / cognitive / adversarial observation) | 📋 Normative / Planned | Tier 0 (rule-based) implemented; Tiers 1–3 reserved for production. |
@@ -72,3 +73,25 @@ Residual, honestly scoped: the lineage chain anchor lives in the same SQLite as
 the records (production anchors it in external/WORM storage); the per-approver
 authority ceiling and the kernel-key wiring are deployment configuration; GIM-2 /
 GIM-4 / GIM-5 and a separate-model classifier remain Normative / Planned.
+
+### Corrigibility review (SA-4)
+
+A focused adversarial review of the kill-switch primitive confirmed 3 defects,
+all since fixed and regression-tested:
+
+- GAP's autonomous heartbeat (`ReconcilerLoop` + the REST API) wired the
+  kill-switch into **nothing** — an engaged switch never halted the production
+  path. One shared switch now flows through the reconciler, every CGA loop it
+  spawns, and the fabric (`app.state.kill_switch`).
+- the CGA loop's halt check was **global-only**, so a per-entity halt let the
+  loop plan and then crash with an uncaught error, and a "find a path to yes"
+  generator could **retarget around** the halt. The loop check is now
+  scope-aware (symmetric with the fabric) and refuses to re-plan around a halt.
+- the advertised halt exception (`KillSwitchEngaged`) was **never raised** (the
+  fabric raised a generic `ExecutionError`); it is now the actual halt signal and
+  subclasses `ExecutionError` so existing handlers still catch it.
+
+The 7 rejected findings were correctly rejected: the execution model is
+synchronous and single-threaded (no reachable TOCTOU), and the authority/audit
+"over-claims" are honestly-disclosed skeleton boundaries (no operator
+authentication, in-memory log) already scoped in the matrix row above.

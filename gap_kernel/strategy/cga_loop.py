@@ -20,6 +20,7 @@ from uuid import uuid4
 from gap_kernel.errors import GovernanceConfigError
 from gap_kernel.execution.fabric import _OOB_REQUIRED_LEVELS, ExecutionFabric
 from gap_kernel.governance.action_classifier import ActionTypeClassifier
+from gap_kernel.governance.corrigibility import KillSwitch
 from gap_kernel.governance.integrity_monitor import GovernanceIntegrityMonitor
 from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.governance.sir import StructuredIntentResolver
@@ -269,6 +270,7 @@ class CGALoop:
         governed: bool = False,
         action_type_classifier: Optional[ActionTypeClassifier] = None,
         block_on_integrity: bool = False,
+        kill_switch: Optional[KillSwitch] = None,
     ):
         self.governance = governance_kernel
         self.execution = execution_fabric
@@ -289,6 +291,9 @@ class CGALoop:
         # threshold-avoidance decomposition for it — making integrity signals
         # consequential rather than advisory.
         self._block_on_integrity = block_on_integrity or governed
+        # Corrigibility: when this human-controlled kill-switch is engaged, the
+        # loop refuses to plan or execute — CGA does NOT route around a halt.
+        self.kill_switch = kill_switch
 
     def run(
         self,
@@ -313,6 +318,20 @@ class CGALoop:
         """
         if intents is None:
             intents = [intent]
+
+        # Corrigibility halt (checked first): a halt stops the system. CGA does
+        # not plan or execute, and does not negotiate a path around it. The check
+        # is scope-aware and symmetric with the Execution Fabric: a global halt,
+        # or a per-scope halt covering the entity this run is about to act on,
+        # short-circuits BEFORE any planning (the strategy layer is never asked
+        # to find a path around the halt — including by retargeting).
+        if self.kill_switch is not None and self._is_halted_for(drift_event):
+            return CGAResult(
+                intent=intent, drift_event=drift_event, proposals=[], decisions=[],
+                accumulated_constraints=[], final_verdict="halted",
+                approved_proposal=None, execution_result=None, total_attempts=0,
+                escalated=False, integrity_signals=[],
+            )
 
         # Governed mode: the SIR intent-transfer gate is mandatory.
         if self._governed and intent_declaration is None:
@@ -401,6 +420,19 @@ class CGALoop:
                     final_verdict = "awaiting_approval"
                     break
 
+                # 4b. Corrigibility re-check immediately before dispatch: a halt
+                #     engaged mid-cycle, or a proposal whose action targets a
+                #     halted scope, yields a clean "halted" result here rather
+                #     than letting the Execution Fabric raise. The loop does NOT
+                #     re-plan to a different target to route around the halt.
+                if self.kill_switch is not None and (
+                    self.kill_switch.is_engaged()
+                    or any(self.kill_switch.is_engaged(a.target) for a in proposal.actions)
+                ):
+                    final_verdict = "halted"
+                    approved_proposal = None
+                    break
+
                 final_verdict = "approved"
                 execution_result = self.execution.execute(proposal, decision)
                 break
@@ -437,6 +469,23 @@ class CGALoop:
                 self.integrity_monitor.scan() if self.integrity_monitor is not None else []
             ),
         )
+
+    def _is_halted_for(self, drift_event: dict) -> bool:
+        """True if the kill-switch is engaged globally, or for the scope this run
+        would act on (the drift's entity), so the loop can refuse to plan BEFORE
+        generating a proposal — symmetric with the Execution Fabric's per-target
+        check, and closing the retarget-around-a-halt path.
+        """
+        if self.kill_switch is None:
+            return False
+        if self.kill_switch.is_engaged():
+            return True
+        if isinstance(drift_event, dict):
+            for key in ("entity_id", "target", "scope"):
+                scope = drift_event.get(key)
+                if scope and self.kill_switch.is_engaged(scope):
+                    return True
+        return False
 
     def _integrity_hold(self, decision: GovernanceDecision, proposal: StrategyProposal) -> bool:
         """True if GIM flags drift or decomposition for this (already-observed) action."""
@@ -515,6 +564,13 @@ class CGAResult:
         """True when an approved action was HELD because GIM flagged a governance-
         integrity signal (drift / threshold-avoidance) for it — routed to a human."""
         return self.final_verdict == "integrity_hold"
+
+    @property
+    def halted(self) -> bool:
+        """True when a human-engaged kill-switch halted the loop. No planning,
+        no proposals, no execution — corrigibility takes precedence over the
+        loop's disposition to find a path to yes."""
+        return self.final_verdict == "halted"
 
     def build_lineage_record(
         self,
