@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from gap_kernel.errors import GovernanceConfigError
 from gap_kernel.execution.fabric import _OOB_REQUIRED_LEVELS, ExecutionFabric
+from gap_kernel.governance.action_classifier import ActionTypeClassifier
 from gap_kernel.governance.integrity_monitor import GovernanceIntegrityMonitor
 from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.governance.sir import StructuredIntentResolver
@@ -266,6 +267,7 @@ class CGALoop:
         intent_resolver: Optional[StructuredIntentResolver] = None,
         integrity_monitor: Optional[GovernanceIntegrityMonitor] = None,
         governed: bool = False,
+        action_type_classifier: Optional[ActionTypeClassifier] = None,
     ):
         self.governance = governance_kernel
         self.execution = execution_fabric
@@ -275,6 +277,9 @@ class CGALoop:
         # optional, opt-in hooks. When a resolver is needed it is created lazily.
         self.intent_resolver = intent_resolver
         self.integrity_monitor = integrity_monitor
+        # When set, derives a governance action_type_id from each proposal
+        # (operational -> governance), overriding any action_type_id passed to run.
+        self.action_type_classifier = action_type_classifier
         # Governed mode makes the SIR intent-transfer gate mandatory: run() must
         # be given a resolved intent declaration, or it refuses (fail closed).
         self._governed = governed
@@ -350,12 +355,18 @@ class CGALoop:
             )
             proposals.append(proposal)
 
-            # 2. Submit to governance
+            # 2. Submit to governance. Classify the proposal into a governance
+            #    action type (operational -> governance) when a classifier is set.
+            proposal_action_type_id = (
+                self.action_type_classifier.classify(proposal)
+                if self.action_type_classifier is not None
+                else action_type_id
+            )
             decision = self.governance.evaluate_proposal(
                 proposal=proposal,
                 intents=intents,
                 world_state=world_state,
-                action_type_id=action_type_id,
+                action_type_id=proposal_action_type_id,
             )
             decisions.append(decision)
 

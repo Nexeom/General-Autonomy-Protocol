@@ -117,14 +117,16 @@ def test_create_app_governed_mode_loads_floor_and_strict_typing():
     gk = app.state.governance_kernel
     assert gk._strict_action_typing is True
     assert len(gk._tier1_floor) == 1  # the signed regulatory floor was loaded
-    assert app.state.reconciler._default_action_type_id == "task_execution"
+    # The governed reconciler classifies its autonomous actions.
+    assert app.state.reconciler._classifier is not None
+    assert app.state.reconciler._classifier._base == "drift_reconciliation"
 
 
 def test_create_app_open_mode_is_permissive_by_default():
     from gap_kernel.api.app import create_app
     app = create_app()  # no profile -> open mode (logs a warning)
     assert app.state.governance_kernel._strict_action_typing is False
-    assert app.state.reconciler._default_action_type_id is None
+    assert app.state.reconciler._classifier is None
 
 
 def test_governed_deployment_blocks_unconfirmed_intent():
