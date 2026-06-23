@@ -122,9 +122,13 @@ out-of-process boundary) are verified. The claims that are deployment-gated
 aspiration for assurance, which was the baseline's core concern.
 
 ### Recommended next steps (in leverage order)
-1. **Make the built controls the default**, not opt-in: wire the out-of-process
-   client, strict action typing, and the SIR gate into the shipped reconciler/REST
-   paths so a default deployment is fail-closed end-to-end.
+1. **Make the built controls the default**, not opt-in. *(Addressed:
+   `governance/deployment.py` `build_governed_deployment()` is a fail-closed
+   governed posture that requires the industry regulatory floor and forces on
+   signature verification, strict action typing, and the SIR gate — distinguishing
+   industry-specific policy, which must be configured, from universal primitives,
+   which are now enforced. Remaining: wire it into the shipped REST app / reconciler
+   as their default assembly.)*
 2. **Make GIM consequential**: have the loop/reconciler *act* on integrity signals
    (block/escalate) rather than only surface them.
 3. **Re-level the residual spec language** (e.g. the unqualified "No" in the
