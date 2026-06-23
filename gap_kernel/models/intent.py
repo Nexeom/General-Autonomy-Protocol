@@ -41,6 +41,12 @@ class Constraint(BaseModel):
     type: ConstraintType
     description: str                        # Human-readable rule
     activation: PolicyActivation = PolicyActivation()
+    # Optional structured numeric threshold for evaluators that need one (e.g. the
+    # AML transaction floor, the PHI minimum-necessary record cap). Read directly
+    # so the threshold is unambiguous — never parsed by guesswork from the free-text
+    # `description` (a statutory citation like "45 CFR 164.514" must not be mistaken
+    # for a threshold).
+    threshold: Optional[float] = None
     # Policy Tier (Fix 3). Defaults to operational; Tier-1 regulatory-floor
     # constraints are declared in a signed Applicability Profile, not here.
     tier: PolicyTier = PolicyTier.OPERATIONAL
