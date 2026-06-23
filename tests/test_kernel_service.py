@@ -155,3 +155,102 @@ def test_subprocess_client_call_times_out():
             client._call({"method": "get_public_key"})
     finally:
         client.close()
+
+
+# --- governed kernel out of process (default isolation, G-2) ----------------
+
+from datetime import timedelta  # noqa: E402
+
+from gap_kernel.crypto.signing import PublicKeyRegistry, generate_keypair  # noqa: E402
+from gap_kernel.governance.profile import ApplicabilityProfile, sign_profile  # noqa: E402
+from gap_kernel.models.governance import ActionTypeSpec  # noqa: E402
+from gap_kernel.models.intent import Constraint, ConstraintType  # noqa: E402
+from gap_kernel.service.kernel_server import dump_governed_config  # noqa: E402
+
+_KID = "regulatory_authority"
+
+
+def _signed_governed_config():
+    priv, pub = generate_keypair()
+    registry = PublicKeyRegistry({_KID: pub})
+    profile = ApplicabilityProfile(
+        profile_id="prof",
+        tier1_constraints=[Constraint(name="cost_ceiling", type=ConstraintType.HARD,
+                                      description="Floor $100.00")],
+        issued_at=datetime(2026, 1, 1),
+    )
+    return dump_governed_config(sign_profile(profile, priv, _KID), registry)
+
+
+def test_subprocess_governed_kernel_enforces_strict_typing_out_of_process():
+    """The signed floor crosses to the child, which runs GOVERNED: strict action
+    typing rejects a proposal with no action_type_id — proving the governed config
+    is applied across the boundary, not just the in-process path."""
+    with SubprocessGovernanceClient(governed_config=_signed_governed_config()) as client:
+        assert not hasattr(client, "_signing_key_hex")     # still no key on the agent side
+        rejected = client.evaluate_proposal(
+            proposal=_proposal(), intents=[_intent()], world_state=_world()
+        )
+        assert rejected.verdict == GovernanceVerdict.REJECTED  # strict typing on
+        approved = client.evaluate_proposal(
+            proposal=_proposal(), intents=[_intent()], world_state=_world(),
+            action_type_id="task_execution",
+        )
+        assert approved.verdict == GovernanceVerdict.APPROVED
+
+    # Contrast: an OPEN child (no governed config) approves the untyped proposal.
+    with SubprocessGovernanceClient() as open_client:
+        d = open_client.evaluate_proposal(
+            proposal=_proposal(), intents=[_intent()], world_state=_world()
+        )
+        assert d.verdict == GovernanceVerdict.APPROVED
+
+
+def test_subprocess_rejects_a_tampered_profile_fail_closed():
+    """A tampered signed profile is rejected by the child kernel on load, so the
+    client cannot even hand-shake — fail closed, no governance runs."""
+    config = _signed_governed_config()
+    config["profile"]["signature"] = "00" * 64  # break the signature
+    with pytest.raises(GovernanceClientError):
+        SubprocessGovernanceClient(governed_config=config)
+
+
+def test_action_type_registry_proxied_across_the_boundary():
+    """The action-type registry (a governance-config surface) is reachable through
+    the boundary, so an isolated deployment is a complete drop-in."""
+    with SubprocessGovernanceClient() as client:
+        assert "task_execution" in client.get_registered_action_types()
+        assert client.get_action_type("nope") is None
+        client.register_action_type(
+            ActionTypeSpec(type_id="custom_x", description="a custom type"), "admin"
+        )
+        got = client.get_action_type("custom_x")
+        assert got is not None and got.registered_by == "admin"
+
+
+def test_failed_construction_leaves_no_temp_file():
+    """A construction that fails — Popen exec error, or a tampered profile the
+    child rejects — must deterministically clean up its temp config file, not
+    leak one per failure."""
+    import glob
+    import os
+    import tempfile as _tf
+
+    pattern = os.path.join(_tf.gettempdir(), "gap_gov_*.json")
+    before = set(glob.glob(pattern))
+
+    # (a) Popen fails (bad executable) after the temp file was written.
+    with pytest.raises(Exception):
+        SubprocessGovernanceClient(
+            python_executable="/nonexistent/python_xyz",
+            governed_config=_signed_governed_config(),
+        )
+    # (b) handshake fails closed on a tampered profile (child exits on load).
+    cfg = _signed_governed_config()
+    cfg["profile"]["signature"] = "00" * 64
+    with pytest.raises(GovernanceClientError):
+        SubprocessGovernanceClient(governed_config=cfg)
+
+    import gc
+    gc.collect()
+    assert set(glob.glob(pattern)) <= before  # no net-new leaked temp files

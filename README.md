@@ -88,7 +88,7 @@ The system hears "no" and figures out how to get to "yes" within the rules.
 
 > Learning modifies strategy weights and skills. **Never governance policy boundaries.** Human authority over constraints is inviolable.
 
-Enforcement is structural, not just procedural. Governed agents operate in environments **architecturally isolated** from governance infrastructure. The agent cannot access, read, modify, or reason about the Governance Kernel. This is not a permission the agent lacks — it is a path that does not exist.
+Enforcement is structural, not just procedural. By default a governed deployment runs the Governance Kernel — with its private signing key — **out of process** (`isolated=True`): the agent side holds only the kernel's public key and a request channel, so there is no in-process path to read, modify, or forge governance, and every decision it acts on must carry a verifiable kernel signature. The in-process embedding modes (`isolated=False`, or supplying your own `governance_kernel`) are a convenience for embedding and testing, **not** an isolation boundary — a co-resident agent can reach co-located objects by reflection. See the [Conformance Statement](docs/CONFORMANCE.md) for exactly what is enforced versus deployment-configured.
 
 ## Key Mechanisms
 

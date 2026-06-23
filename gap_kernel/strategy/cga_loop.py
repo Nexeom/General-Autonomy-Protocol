@@ -523,6 +523,21 @@ class CGALoop:
         decision.human_approval_timestamp = timestamp or datetime.utcnow()
         return self.execution.execute(proposal, decision)
 
+    def close(self) -> None:
+        """Release a governance handle that owns a resource (e.g. an isolated
+        deployment's out-of-process kernel subprocess). A no-op for an in-process
+        kernel, which has no ``close()``. Lets a governed loop be used as a context
+        manager: ``with build_governed_deployment(...) as loop: ...``."""
+        closer = getattr(self.governance, "close", None)
+        if callable(closer):
+            closer()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
 
 class CGAResult:
     """Result of a complete CGA loop execution."""

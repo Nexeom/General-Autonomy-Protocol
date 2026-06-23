@@ -77,3 +77,8 @@ class PublicKeyRegistry:
 
     def get(self, key_id: str) -> Optional[str]:
         return self._keys.get(key_id)
+
+    def as_dict(self) -> Dict[str, str]:
+        """A copy of the key_id -> public_key_hex map. Public keys only — safe to
+        serialize across a process boundary (e.g. to a governed kernel subprocess)."""
+        return dict(self._keys)

@@ -20,10 +20,12 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from gap_kernel.crypto.signing import PublicKeyRegistry
+from gap_kernel.client.governance_client import SubprocessGovernanceClient
 from gap_kernel.execution.fabric import ExecutionFabric
 from gap_kernel.governance.corrigibility import KillSwitch
 from gap_kernel.governance.integrity_monitor import GovernanceIntegrityMonitor
 from gap_kernel.governance.kernel import GovernanceKernel
+from gap_kernel.service.kernel_server import dump_governed_config
 from gap_kernel.governance.profile import ApplicabilityProfile
 
 logger = logging.getLogger("gap_kernel.api")
@@ -91,6 +93,7 @@ def create_app(
     applicability_profile: Optional[ApplicabilityProfile] = None,
     profile_key_registry: Optional[PublicKeyRegistry] = None,
     reconciler_action_type_id: str = "drift_reconciliation",
+    isolated: bool = True,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -100,6 +103,11 @@ def create_app(
     actions under ``reconciler_action_type_id``. Without a profile the app runs in
     OPEN mode (a loud warning is logged) — fine for prototyping/embedding, not for
     a production deployment that requires a regulatory floor.
+
+    In governed mode the kernel runs OUT OF PROCESS by default (``isolated=True``)
+    behind ``SubprocessGovernanceClient`` — the app holds only the public key and
+    a request channel, so the signing key cannot be reached by reflection. Pass
+    ``isolated=False`` to run the governed kernel in-process (embedding / tests).
     """
 
     app = FastAPI(
@@ -111,8 +119,17 @@ def create_app(
     # Initialize components
     ws = world_store or WorldModelStore()
     governed = applicability_profile is not None
+    governance_client = None
     if governance_kernel is not None:
         gk = governance_kernel
+    elif governed and isolated:
+        # Default governed posture: the kernel (with its signing key) runs in a
+        # separate OS process; the app holds only this client.
+        gk = governance_client = SubprocessGovernanceClient(
+            governed_config=dump_governed_config(
+                applicability_profile, profile_key_registry
+            )
+        )
     elif governed:
         gk = GovernanceKernel(
             governed=True,
@@ -169,6 +186,13 @@ def create_app(
     app.state.reconciler = reconciler
     app.state.kill_switch = ks
     app.state.integrity_monitor = integrity_monitor
+    # When the governed kernel runs out of process, close the subprocess on
+    # shutdown so it is not orphaned.
+    app.state.governance_client = governance_client
+    if governance_client is not None:
+        @app.on_event("shutdown")
+        def _close_governance_subprocess():  # pragma: no cover - lifecycle hook
+            governance_client.close()
 
     # === INTENT MANAGEMENT ===
 
