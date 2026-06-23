@@ -439,11 +439,45 @@ class ReconcilerLoop:
         else:
             state.consecutive_failures = 0
 
+    def attach_escalation_framing(
+        self,
+        escalation_id: str,
+        *,
+        preferred_option_id: str,
+        option_order: List[str],
+        favorably_framed: List[str],
+    ) -> Optional[dict]:
+        """Record how an escalation's options were PRESENTED to the human (GIM-4):
+        the system's preferred option, the order the options were shown in, and
+        which options were framed favorably. A deployment that renders multiple
+        options for a human decision declares the framing it used here; resolving
+        with the human's choice then feeds the GIM-4 escalation-framing-bias
+        detector so presentation bias becomes measurable on the shipped path."""
+        for esc in self._escalation_queue:
+            if esc["id"] == escalation_id:
+                esc["framing"] = {
+                    "preferred_option_id": preferred_option_id,
+                    "option_order": list(option_order),
+                    "favorably_framed": list(favorably_framed),
+                }
+                return esc
+        return None
+
     def resolve_escalation(
-        self, escalation_id: str, resolution: str, resolver: str
+        self,
+        escalation_id: str,
+        resolution: str,
+        resolver: str,
+        chosen_option_id: Optional[str] = None,
     ) -> Optional[dict]:
         """Resolve any OPEN escalation — a pending rejection, an awaiting-approval
-        item, or a GIM integrity_hold — so a held action is not a dead letter."""
+        item, or a GIM integrity_hold — so a held action is not a dead letter.
+
+        If the escalation carries framing (see ``attach_escalation_framing``) and a
+        ``chosen_option_id`` is supplied, feed the GIM-4 detector: whether the human
+        chose the system's preferred option, the first-listed option, and whether
+        the preferred option was framed favorably — so escalation-framing bias is
+        measured from real human decisions."""
         for esc in self._escalation_queue:
             if esc["id"] == escalation_id and esc["status"] in _OPEN_ESCALATION_STATUSES:
                 esc["prior_status"] = esc["status"]
@@ -451,8 +485,44 @@ class ReconcilerLoop:
                 esc["resolution"] = resolution
                 esc["resolved_by"] = resolver
                 esc["resolved_at"] = datetime.utcnow().isoformat()
+                esc["chosen_option_id"] = chosen_option_id
+                self._feed_framing_telemetry(esc, chosen_option_id)
                 return esc
         return None
+
+    def _feed_framing_telemetry(self, esc: dict, chosen_option_id: Optional[str]) -> None:
+        """GIM-4: record this resolution's framing/choice on the integrity monitor.
+
+        Skips a monitor/framing/choice that is absent, a framing dict missing any
+        required key (a malformed sample must not be counted as an all-False
+        observation), and a second feed for an already-fed escalation (so a
+        re-opened-and-re-resolved escalation cannot double-count one decision)."""
+        framing = esc.get("framing")
+        if (
+            self._integrity_monitor is None
+            or framing is None
+            or chosen_option_id is None
+            or esc.get("_framing_fed")
+            or not all(k in framing for k in
+                       ("preferred_option_id", "option_order", "favorably_framed"))
+        ):
+            return
+        order = framing.get("option_order") or []
+        self._integrity_monitor.observe_escalation(
+            preferred_chosen=(chosen_option_id == framing["preferred_option_id"]),
+            first_option_chosen=(bool(order) and chosen_option_id == order[0]),
+            preferred_favorably_framed=(
+                framing["preferred_option_id"] in framing["favorably_framed"]
+            ),
+        )
+        esc["_framing_fed"] = True
+
+    def escalation_framing_bias(self):
+        """The current GIM-4 escalation-framing-bias signal (or None) — surfaced
+        once enough framed resolutions have been observed on the shipped path."""
+        if self._integrity_monitor is None:
+            return None
+        return self._integrity_monitor.check_escalation_framing_bias()
 
     async def run_async(self, stop_event: Optional[asyncio.Event] = None) -> None:
         """Run the reconciler loop asynchronously."""

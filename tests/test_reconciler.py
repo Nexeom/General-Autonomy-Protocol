@@ -340,6 +340,80 @@ def test_held_target_does_not_pile_up_and_trips_the_breaker():
     assert reconciler._dampening["lead_4821"].circuit_broken is True  # breaker tripped
 
 
+def _resolve_framed(reconciler, esc_id, *, preferred, order, framed, chosen):
+    reconciler._escalation_queue.append({"id": esc_id, "entity_id": "e", "status": "pending"})
+    reconciler.attach_escalation_framing(esc_id, preferred_option_id=preferred,
+                                         option_order=order, favorably_framed=framed)
+    reconciler.resolve_escalation(esc_id, "ok", "admin", chosen_option_id=chosen)
+
+
+def test_resolving_framed_escalations_feeds_gim4_position_bias():
+    """G-4: resolving framed escalations on the shipped path feeds GIM-4, so
+    presentation bias (the human almost always picking the first-listed option)
+    becomes a detectable signal."""
+    world_store, _ = _drifting_world_and_intent()
+    monitor = GovernanceIntegrityMonitor(escalation_min_samples=5)
+    reconciler = _reconciler_with(world_store, monitor=monitor)
+    for i in range(9):
+        _resolve_framed(reconciler, f"esc_{i}", preferred="A", order=["A", "B"],
+                        framed=["A"], chosen="A")          # always the first-listed
+    _resolve_framed(reconciler, "esc_9", preferred="A", order=["A", "B"],
+                    framed=["A"], chosen="B")              # one counter-example
+    signal = reconciler.escalation_framing_bias()
+    assert signal is not None and signal.signal_type == "GIM-4"
+    assert signal.evidence["position_bias_rate"] == 0.9
+
+
+def test_unbiased_framed_resolutions_do_not_flag():
+    world_store, _ = _drifting_world_and_intent()
+    monitor = GovernanceIntegrityMonitor(escalation_min_samples=5)
+    reconciler = _reconciler_with(world_store, monitor=monitor)
+    for i in range(10):
+        # Human alternates; preferred/first chosen ~half the time.
+        chosen = "A" if i % 2 == 0 else "B"
+        _resolve_framed(reconciler, f"esc_{i}", preferred="A", order=["A", "B"],
+                        framed=["A"], chosen=chosen)
+    assert reconciler.escalation_framing_bias() is None
+
+
+def test_framing_is_not_double_fed_on_reopen():
+    """A re-opened-and-re-resolved escalation must not feed GIM-4 twice (one human
+    decision is one observation)."""
+    world_store, _ = _drifting_world_and_intent()
+    monitor = GovernanceIntegrityMonitor(escalation_min_samples=1)
+    reconciler = _reconciler_with(world_store, monitor=monitor)
+    reconciler._escalation_queue.append({"id": "e0", "entity_id": "e", "status": "pending"})
+    reconciler.attach_escalation_framing("e0", preferred_option_id="A",
+                                         option_order=["A", "B"], favorably_framed=["A"])
+    reconciler.resolve_escalation("e0", "ok", "admin", chosen_option_id="A")
+    # Force a re-open and re-resolve.
+    reconciler._escalation_queue[0]["status"] = "pending"
+    reconciler.resolve_escalation("e0", "ok again", "admin", chosen_option_id="A")
+    assert len(monitor._escalations) == 1                  # fed exactly once
+
+
+def test_malformed_framing_is_not_counted():
+    """A framing dict missing required keys is skipped (not counted as an all-False
+    sample that would dilute the bias measurement)."""
+    world_store, _ = _drifting_world_and_intent()
+    monitor = GovernanceIntegrityMonitor(escalation_min_samples=1)
+    reconciler = _reconciler_with(world_store, monitor=monitor)
+    reconciler._escalation_queue.append(
+        {"id": "e0", "entity_id": "e", "status": "pending", "framing": {}})  # malformed
+    reconciler.resolve_escalation("e0", "ok", "admin", chosen_option_id="A")
+    assert monitor._escalations == []
+
+
+def test_resolution_without_framing_does_not_feed_gim4():
+    world_store, _ = _drifting_world_and_intent()
+    monitor = GovernanceIntegrityMonitor(escalation_min_samples=1)
+    reconciler = _reconciler_with(world_store, monitor=monitor)
+    reconciler._escalation_queue.append({"id": "e0", "entity_id": "e", "status": "pending"})
+    reconciler.resolve_escalation("e0", "ok", "admin")     # no framing, no choice
+    assert monitor._escalations == []                       # nothing observed
+    assert reconciler.escalation_framing_bias() is None
+
+
 def test_reconciler_without_monitor_executes_normally():
     """Open posture: no monitor wired => no integrity holds (backward compatible)."""
     world_store, intent = _drifting_world_and_intent()

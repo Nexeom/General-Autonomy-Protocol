@@ -289,3 +289,21 @@ class TestOpenEscalations:
         assert resolve.status_code == 200
         assert resolve.json()["status"] == "resolved"
         assert client.get("/escalations/open").json() == []
+
+
+def test_framing_bias_endpoint_and_resolve_with_chosen_option(client):
+    """GIM-4 REST wiring: the framing-bias endpoint responds, and resolve accepts
+    a chosen_option_id (open mode has no monitor, so the signal is null)."""
+    reconciler = client.app.state.reconciler
+    reconciler._escalation_queue.append({
+        "id": "esc_f", "entity_id": "e1", "intent_id": "i1",
+        "status": "pending", "created_at": "2026-06-23T00:00:00",
+    })
+    resolve = client.post("/escalations/esc_f/resolve",
+                          json={"resolution": "ok", "resolver": "admin",
+                                "chosen_option_id": "A"})
+    assert resolve.status_code == 200
+    assert resolve.json()["chosen_option_id"] == "A"
+    bias = client.get("/reconciler/framing-bias")
+    assert bias.status_code == 200
+    assert bias.json()["signal"] is None  # open mode: no integrity monitor wired
