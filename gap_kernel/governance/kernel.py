@@ -314,12 +314,38 @@ def _check_safety_boundary(
     return False
 
 
+def _check_ip_content_risk(
+    proposal: StrategyProposal,
+    constraint: Constraint,
+    world_state: WorldModel,
+) -> bool:
+    """IP / Content (Category 8): a content-generating action must carry an IP-risk
+    assessment, and high-risk output (substantial copyright similarity, third-party
+    trademark usage, or public distribution) must additionally carry provenance
+    metadata. A ``generates_content`` action without an ``ip_risk_assessment`` — or
+    high-risk content without ``provenance`` — is a violation (the IP-risk gate /
+    provenance attachment was not performed)."""
+    for action in proposal.actions:
+        if not action.parameters.get("generates_content"):
+            continue
+        if not action.parameters.get("ip_risk_assessment"):
+            return True
+        high_risk = (
+            action.parameters.get("copyright_similarity")
+            or action.parameters.get("trademark_usage")
+            or action.parameters.get("public_distribution")
+        )
+        if high_risk and not action.parameters.get("provenance"):
+            return True
+    return False
+
+
 # Registry of constraint-name -> concrete evaluator. A constraint whose name is
 # absent here has no concrete check; the kernel cannot prove it satisfied and so
 # fails closed (see _check_constraint_violation and evaluate_proposal). Covers all
 # eight Regulatory Constraint Categories: data privacy (Cat 1), communications
 # (Cat 2), transparency (Cat 3), anti-discrimination (Cat 4), financial (Cat 5),
-# healthcare (Cat 6), safety (Cat 7); IP/content (Cat 8) is provenance-tracked.
+# healthcare (Cat 6), safety (Cat 7), IP/content (Cat 8).
 _CONSTRAINT_EVALUATORS: Dict[str, callable] = {
     "gdpr_consent_required": _check_gdpr_consent,
     "no_contact_outside_hours": _check_contact_hours,
@@ -329,6 +355,7 @@ _CONSTRAINT_EVALUATORS: Dict[str, callable] = {
     "aml_screening_required": _check_aml_screening,
     "minimum_necessary_phi": _check_minimum_necessary_phi,
     "safety_boundary": _check_safety_boundary,
+    "ip_content_risk": _check_ip_content_risk,
 }
 
 

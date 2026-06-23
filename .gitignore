@@ -7,3 +7,8 @@ build/
 .pytest_cache/
 *.db
 .env
+
+# Coverage / property-based testing artifacts
+.coverage
+htmlcov/
+.hypothesis/
