@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from gap_kernel.crypto.signing import PublicKeyRegistry
 from gap_kernel.execution.fabric import ExecutionFabric
+from gap_kernel.governance.corrigibility import KillSwitch
 from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.governance.profile import ApplicabilityProfile
 
@@ -126,8 +127,16 @@ def create_app(
         )
     ls = lineage_store or LineageStore()
     le = learning_engine or LearningEngine()
+    # Corrigibility (SA-4): one human-controlled kill-switch guards GAP's whole
+    # autonomous path. The SAME instance is wired into the Execution Fabric (it
+    # refuses to dispatch when engaged) and the Reconciler/CGA loop (it refuses
+    # to plan when engaged), so engaging app.state.kill_switch halts the
+    # autonomous heartbeat — planning and dispatch — fail closed.
+    ks = KillSwitch()
     # Fail closed: the fabric verifies the kernel's signature on every decision.
-    ef = ExecutionFabric(ws.model, kernel_public_key_hex=gk.public_key_hex)
+    ef = ExecutionFabric(
+        ws.model, kernel_public_key_hex=gk.public_key_hex, kill_switch=ks
+    )
     config = reconciler_config or ReconcilerConfig()
 
     reconciler = ReconcilerLoop(
@@ -138,6 +147,7 @@ def create_app(
         learning_engine=le,
         config=config,
         default_action_type_id=reconciler_action_type_id if governed else None,
+        kill_switch=ks,
     )
 
     # Store components on app state for access in endpoints
@@ -147,6 +157,7 @@ def create_app(
     app.state.learning_engine = le
     app.state.execution_fabric = ef
     app.state.reconciler = reconciler
+    app.state.kill_switch = ks
 
     # === INTENT MANAGEMENT ===
 

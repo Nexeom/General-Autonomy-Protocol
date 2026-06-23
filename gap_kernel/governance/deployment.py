@@ -22,6 +22,7 @@ from typing import Optional
 from gap_kernel.crypto.signing import PublicKeyRegistry
 from gap_kernel.errors import GovernanceConfigError
 from gap_kernel.execution.fabric import ExecutionFabric
+from gap_kernel.governance.corrigibility import KillSwitch
 from gap_kernel.governance.integrity_monitor import GovernanceIntegrityMonitor
 from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.governance.profile import ApplicabilityProfile
@@ -42,6 +43,7 @@ def build_governed_deployment(
     oob_ledger: Optional[OOBLedger] = None,
     intent_resolver: Optional[StructuredIntentResolver] = None,
     integrity_monitor: Optional[GovernanceIntegrityMonitor] = None,
+    kill_switch: Optional[KillSwitch] = None,
     strategy_generator=None,
     max_attempts: int = 3,
 ) -> CGALoop:
@@ -56,7 +58,13 @@ def build_governed_deployment(
         (fail closed) and enforces OOB approval for L2+ against ``approver_registry``
         (with an optional per-approver ceiling);
       - the CGA loop runs in governed mode (the SIR gate is mandatory) with GIM
-        observation wired.
+        observation wired;
+      - a corrigibility ``KillSwitch`` (shared by the fabric and the loop) is
+        always present. Engaging it halts execution and planning; corrigibility
+        is universal, so a governed deployment is never without one.
+
+    The kill-switch is reachable on the returned loop as ``loop.kill_switch`` so
+    a human authority can ``engage()`` / ``disengage()`` it out of band.
 
     Raises ``GovernanceConfigError`` if the regulatory floor is missing.
     """
@@ -66,6 +74,10 @@ def build_governed_deployment(
             "regulatory floor). The floor's content is industry-specific; "
             "supplying one is mandatory."
         )
+
+    # Corrigibility is universal: a governed deployment always has a kill-switch,
+    # shared by reference between the fabric and the loop.
+    kill_switch = kill_switch or KillSwitch()
 
     kernel = GovernanceKernel(
         governed=True,
@@ -78,6 +90,7 @@ def build_governed_deployment(
         public_key_registry=approver_registry,
         approver_max_levels=approver_max_levels,
         oob_ledger=oob_ledger,
+        kill_switch=kill_switch,
     )
     return CGALoop(
         kernel,
@@ -87,6 +100,7 @@ def build_governed_deployment(
         intent_resolver=intent_resolver or StructuredIntentResolver(),
         integrity_monitor=integrity_monitor or GovernanceIntegrityMonitor(),
         governed=True,
+        kill_switch=kill_switch,
     )
 
 

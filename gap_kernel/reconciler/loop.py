@@ -19,6 +19,7 @@ from typing import Callable, Dict, List, Optional
 from uuid import uuid4
 
 from gap_kernel.execution.fabric import ExecutionFabric
+from gap_kernel.governance.corrigibility import KillSwitch
 from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.learning.engine import LearningEngine
 from gap_kernel.lineage.store import LineageStore
@@ -181,6 +182,7 @@ class ReconcilerLoop:
         config: Optional[ReconcilerConfig] = None,
         default_action_type_id: Optional[str] = None,
         action_type_classifier: Optional[ActionTypeClassifier] = None,
+        kill_switch: Optional[KillSwitch] = None,
     ):
         self.world_store = world_store
         self.governance = governance_kernel
@@ -188,6 +190,13 @@ class ReconcilerLoop:
         self.lineage_store = lineage_store
         self.learning = learning_engine
         self.config = config or ReconcilerConfig()
+        # Corrigibility: GAP's autonomous heartbeat must be haltable. The same
+        # human-controlled kill-switch is shared with every CGA loop this
+        # reconciler spawns AND with the Execution Fabric; engaging it halts
+        # autonomous drift-correction (planning and dispatch). Defaults to a
+        # fresh switch so the heartbeat is never without one; engage/disengage
+        # it out of band via ``reconciler.kill_switch``.
+        self.kill_switch = kill_switch if kill_switch is not None else KillSwitch()
         # How the reconciler classifies its own autonomous drift-correction
         # actions into a governance action type (needed under strict typing).
         # Defaults to a drift_reconciliation classifier (escalating to a
@@ -265,12 +274,15 @@ class ReconcilerLoop:
         if not intent:
             return {"drift": drift.to_dict(), "error": "Intent not found"}
 
-        # Create CGA loop
+        # Create CGA loop. The shared kill-switch flows into both the loop (it
+        # refuses to plan when halted) and — via self.execution — the fabric
+        # (it refuses to dispatch), so a halt stops the autonomous path cleanly.
         cga = CGALoop(
             governance_kernel=self.governance,
             execution_fabric=self.execution,
             max_attempts=self.config.max_retry_budget,
             action_type_classifier=self._classifier,
+            kill_switch=self.kill_switch,
         )
 
         # Run CGA loop

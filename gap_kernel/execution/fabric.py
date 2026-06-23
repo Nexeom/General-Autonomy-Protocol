@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import Callable, Dict, Optional
 
 from gap_kernel.crypto.signing import PublicKeyRegistry, verify as verify_signature
+from gap_kernel.governance.corrigibility import KillSwitch
 from gap_kernel.models.execution import ExecutionResult
 from gap_kernel.models.governance import (
     AuthorizationLevel,
@@ -59,6 +60,15 @@ class OOBVerificationError(ExecutionError):
     pass
 
 
+class KillSwitchEngaged(ExecutionError):
+    """Raised when execution is attempted while the corrigibility kill-switch is
+    engaged (SA-4). Subclasses :class:`ExecutionError` so existing
+    ``except ExecutionError`` handlers still catch a halt, while callers that
+    want to distinguish a deliberate halt from an ordinary failure can catch
+    this type specifically."""
+    pass
+
+
 class ExecutionFabric:
     """
     Dispatches approved strategies. For the kernel prototype,
@@ -90,9 +100,13 @@ class ExecutionFabric:
         kernel_public_key_hex: Optional[str] = None,
         allow_unsigned_decisions: bool = False,
         approver_max_levels: Optional[Dict[str, AuthorizationLevel]] = None,
+        kill_switch: Optional[KillSwitch] = None,
     ):
         self.world_model = world_model
         self._executors: Dict[str, Callable] = {}
+        # Corrigibility: when this human-controlled kill-switch is engaged, no
+        # action is dispatched (checked first, fail closed).
+        self._kill_switch = kill_switch
         # Persistent replay protection + approver-key trust boundary for OOB.
         # Defaults are process-local; production injects shared, durable stores.
         self._oob_ledger = oob_ledger if oob_ledger is not None else OOBLedger()
@@ -121,11 +135,22 @@ class ExecutionFabric:
         """
         Execute an approved strategy proposal.
 
+        GUARD: A human-engaged kill-switch halts all execution (corrigibility).
         GUARD: The decision must authorize THIS proposal.
         GUARD: The decision must be signed by the trusted Governance Kernel.
         GUARD: Never execute without governance approval.
         GUARD: L2+ requires Out-of-Band Authority Verification.
         """
+        # Corrigibility halt (checked first): a halt overrides everything.
+        if self._kill_switch is not None:
+            if self._kill_switch.is_engaged() or any(
+                self._kill_switch.is_engaged(a.target) for a in proposal.actions
+            ):
+                raise KillSwitchEngaged(
+                    f"Execution halted for proposal {proposal.id}: the kill-switch "
+                    f"is engaged. No action will be dispatched."
+                )
+
         # Bind execution to the evaluated proposal (Fix 2): a decision authorizes
         # the specific proposal it was rendered for. Executing a different payload
         # under someone else's approval is a confused-deputy attack.
