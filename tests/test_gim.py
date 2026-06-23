@@ -64,6 +64,17 @@ def test_gim3_no_signal_below_threshold():
     assert mon.check_decomposition("acct_99") is None
 
 
+def test_gim3_signal_survives_later_action():
+    """Monotonic detection: a later same-target action (even high-authorization)
+    must not move the window anchor and evict an already-qualifying cluster."""
+    mon = GovernanceIntegrityMonitor(decomposition_count_threshold=3)
+    for i in range(3):
+        mon.observe("task_execution", "L0", target="acct_99", timestamp=T0 + timedelta(seconds=i))
+    assert mon.check_decomposition("acct_99") is not None
+    mon.observe("task_execution", "L2", target="acct_99", timestamp=T0 + timedelta(seconds=600))
+    assert mon.check_decomposition("acct_99") is not None
+
+
 def test_gim3_respects_time_window():
     mon = GovernanceIntegrityMonitor(
         decomposition_count_threshold=3, decomposition_window_seconds=300

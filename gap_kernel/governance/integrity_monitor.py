@@ -247,27 +247,35 @@ class GovernanceIntegrityMonitor:
         return None
 
     def check_decomposition(self, target: str) -> Optional[IntegritySignal]:
-        """GIM-3: flag many low-authorization actions against one target in a window."""
-        history = self._by_target.get(target, [])
-        if not history:
+        """GIM-3: flag many low-authorization actions against one target in a window.
+
+        Detection is monotonic: it slides the window over the low-authorization
+        actions and flags the first qualifying window, so a later action on the
+        same target (of any rank) cannot move the anchor and evict an already-
+        qualifying cluster.
+        """
+        low = sorted(
+            (o for o in self._by_target.get(target, [])
+             if o.rank <= self.decomposition_max_rank),
+            key=lambda o: o.at,
+        )
+        if len(low) < self.decomposition_count_threshold:
             return None
-        latest = max(o.at for o in history)
-        window_start = latest - self.decomposition_window
-        recent_low = [
-            o for o in history
-            if o.at >= window_start and o.rank <= self.decomposition_max_rank
-        ]
-        if len(recent_low) >= self.decomposition_count_threshold:
-            return IntegritySignal(
-                signal_type="GIM-3",
-                subject=target,
-                detail=(
-                    f"{len(recent_low)} low-authorization actions against '{target}' "
-                    f"within {self.decomposition_window.seconds}s — possible "
-                    f"threshold-avoidance decomposition."
-                ),
-                evidence={"count": len(recent_low), "max_rank": self.decomposition_max_rank},
-            )
+        window_seconds = int(self.decomposition_window.total_seconds())
+        for i, anchor in enumerate(low):
+            window_end = anchor.at + self.decomposition_window
+            cluster = [o for o in low[i:] if o.at <= window_end]
+            if len(cluster) >= self.decomposition_count_threshold:
+                return IntegritySignal(
+                    signal_type="GIM-3",
+                    subject=target,
+                    detail=(
+                        f"{len(cluster)} low-authorization actions against '{target}' "
+                        f"within {window_seconds}s — possible threshold-avoidance "
+                        f"decomposition."
+                    ),
+                    evidence={"count": len(cluster), "max_rank": self.decomposition_max_rank},
+                )
         return None
 
     def check_audit_divergence(self) -> Optional[IntegritySignal]:
