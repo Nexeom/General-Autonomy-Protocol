@@ -22,6 +22,7 @@ from gap_kernel.execution.fabric import ExecutionFabric
 from gap_kernel.governance.corrigibility import KillSwitch
 from gap_kernel.governance.integrity_monitor import GovernanceIntegrityMonitor
 from gap_kernel.governance.kernel import GovernanceKernel
+from gap_kernel.governance.self_evolution import SelfEvolutionMonitor
 from gap_kernel.learning.engine import LearningEngine
 from gap_kernel.lineage.store import LineageStore
 from gap_kernel.models.intent import IntentVector
@@ -192,6 +193,7 @@ class ReconcilerLoop:
         kill_switch: Optional[KillSwitch] = None,
         integrity_monitor: Optional[GovernanceIntegrityMonitor] = None,
         block_on_integrity: bool = False,
+        self_evolution_monitor: Optional[SelfEvolutionMonitor] = None,
     ):
         self.world_store = world_store
         self.governance = governance_kernel
@@ -207,6 +209,9 @@ class ReconcilerLoop:
         # action GIM flags is HELD and escalated to a human rather than executed.
         self._integrity_monitor = integrity_monitor
         self._block_on_integrity = block_on_integrity
+        # Self-evolution capability-gain monitor (SA-4), shared across cycles like
+        # the integrity monitor so it watches the whole self-modification stream.
+        self._self_evolution_monitor = self_evolution_monitor
         # Corrigibility: GAP's autonomous heartbeat must be haltable. The same
         # human-controlled kill-switch is shared with every CGA loop this
         # reconciler spawns AND with the Execution Fabric; engaging it halts
@@ -313,6 +318,7 @@ class ReconcilerLoop:
             kill_switch=self.kill_switch,
             integrity_monitor=self._integrity_monitor,
             block_on_integrity=self._block_on_integrity,
+            self_evolution_monitor=self._self_evolution_monitor,
         )
 
         # Run CGA loop

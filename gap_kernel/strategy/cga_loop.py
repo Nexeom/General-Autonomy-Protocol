@@ -22,6 +22,7 @@ from gap_kernel.execution.fabric import _OOB_REQUIRED_LEVELS, ExecutionFabric
 from gap_kernel.governance.action_classifier import ActionTypeClassifier
 from gap_kernel.governance.corrigibility import KillSwitch
 from gap_kernel.governance.integrity_monitor import GovernanceIntegrityMonitor
+from gap_kernel.governance.self_evolution import SelfEvolutionMonitor
 from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.governance.sir import StructuredIntentResolver
 from gap_kernel.models.execution import ExecutionResult
@@ -271,6 +272,7 @@ class CGALoop:
         action_type_classifier: Optional[ActionTypeClassifier] = None,
         block_on_integrity: bool = False,
         kill_switch: Optional[KillSwitch] = None,
+        self_evolution_monitor: Optional[SelfEvolutionMonitor] = None,
     ):
         self.governance = governance_kernel
         self.execution = execution_fabric
@@ -280,6 +282,10 @@ class CGALoop:
         # optional, opt-in hooks. When a resolver is needed it is created lazily.
         self.intent_resolver = intent_resolver
         self.integrity_monitor = integrity_monitor
+        # Self-evolution capability-gain monitor (SA-4): observes self-modification
+        # decisions; under block_on_integrity, a self-modification is HELD when the
+        # agent is in a flagged capability-gain pattern (velocity / privilege / surface).
+        self.self_evolution_monitor = self_evolution_monitor
         # When set, derives a governance action_type_id from each proposal
         # (operational -> governance), overriding any action_type_id passed to run.
         self.action_type_classifier = action_type_classifier
@@ -396,8 +402,14 @@ class CGALoop:
             decisions.append(decision)
 
             # GIM: feed the decision to the integrity monitor (drift / decomposition).
+            # GIM legitimately watches the decision STREAM, so it observes every
+            # decision here. The self-evolution monitor, by contrast, measures
+            # REALIZED capability gain, so it is fed only after a self-modification
+            # actually executes (below / in approve_and_execute) — an approved-but-
+            # awaiting-OOB or escalated self-mod gains no capability and must not
+            # inflate the velocity / surface / privilege counters.
+            target = proposal.actions[0].target if proposal.actions else None
             if self.integrity_monitor is not None:
-                target = proposal.actions[0].target if proposal.actions else None
                 self.integrity_monitor.observe_decision(decision, target=target)
 
             # 3. Route based on verdict
@@ -435,6 +447,11 @@ class CGALoop:
 
                 final_verdict = "approved"
                 execution_result = self.execution.execute(proposal, decision)
+                # SA-4: a self-modification counts toward capability gain only once
+                # it has actually executed (realized), matching what the monitor
+                # claims to measure.
+                if execution_result.success and self.self_evolution_monitor is not None:
+                    self.self_evolution_monitor.observe_decision(decision, target=target)
                 break
 
             elif decision.verdict == GovernanceVerdict.ESCALATE:
@@ -488,14 +505,23 @@ class CGALoop:
         return False
 
     def _integrity_hold(self, decision: GovernanceDecision, proposal: StrategyProposal) -> bool:
-        """True if GIM flags drift or decomposition for this (already-observed) action."""
-        if self.integrity_monitor is None:
-            return False
+        """True if an integrity monitor flags this (already-observed) action: GIM
+        authorization drift / decomposition, or — for a self-modification — a
+        self-evolution capability-gain pattern (SA-4)."""
         action_type = decision.action_type_id or "unspecified"
-        if self.integrity_monitor.check_authorization_drift(action_type) is not None:
-            return True
         target = proposal.actions[0].target if proposal.actions else None
-        if target and self.integrity_monitor.check_decomposition(target) is not None:
+        if self.integrity_monitor is not None:
+            if self.integrity_monitor.check_authorization_drift(action_type) is not None:
+                return True
+            if target and self.integrity_monitor.check_decomposition(target) is not None:
+                return True
+        # Self-evolution: hold a self-modification when the agent is in a flagged
+        # capability-gain pattern (velocity / privilege accrual / surface expansion).
+        if (
+            self.self_evolution_monitor is not None
+            and self.self_evolution_monitor.is_self_modifying(action_type)
+            and self.self_evolution_monitor.is_flagged()
+        ):
             return True
         return False
 
@@ -521,7 +547,14 @@ class CGALoop:
         decision.human_approver_public_key_id = approver_key_id
         decision.human_approval_valid_until = valid_until
         decision.human_approval_timestamp = timestamp or datetime.utcnow()
-        return self.execution.execute(proposal, decision)
+        result = self.execution.execute(proposal, decision)
+        # SA-4: an L2+ self-modification is realized here (when the human OOB
+        # signature actually dispatches it), so it counts toward capability gain
+        # only now — not when the loop first surfaced it as awaiting_approval.
+        if result.success and self.self_evolution_monitor is not None:
+            target = proposal.actions[0].target if proposal.actions else None
+            self.self_evolution_monitor.observe_decision(decision, target=target)
+        return result
 
     def close(self) -> None:
         """Release a governance handle that owns a resource (e.g. an isolated

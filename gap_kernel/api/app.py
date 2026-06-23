@@ -25,6 +25,7 @@ from gap_kernel.execution.fabric import ExecutionFabric
 from gap_kernel.governance.corrigibility import KillSwitch
 from gap_kernel.governance.integrity_monitor import GovernanceIntegrityMonitor
 from gap_kernel.governance.kernel import GovernanceKernel
+from gap_kernel.governance.self_evolution import SelfEvolutionMonitor
 from gap_kernel.service.kernel_server import dump_governed_config
 from gap_kernel.governance.profile import ApplicabilityProfile
 
@@ -163,6 +164,10 @@ def create_app(
     # decomposition is HELD and escalated to a human, not executed. Open mode runs
     # without a monitor (advisory/none), consistent with its permissive posture.
     integrity_monitor = GovernanceIntegrityMonitor() if governed else None
+    # SA-4: governed mode also watches the self-modification stream for capability
+    # gain (velocity / privilege accrual / surface expansion), consequential under
+    # block_on_integrity.
+    self_evolution_monitor = SelfEvolutionMonitor() if governed else None
 
     reconciler = ReconcilerLoop(
         world_store=ws,
@@ -175,6 +180,7 @@ def create_app(
         kill_switch=ks,
         integrity_monitor=integrity_monitor,
         block_on_integrity=governed,
+        self_evolution_monitor=self_evolution_monitor,
     )
 
     # Store components on app state for access in endpoints
@@ -186,6 +192,7 @@ def create_app(
     app.state.reconciler = reconciler
     app.state.kill_switch = ks
     app.state.integrity_monitor = integrity_monitor
+    app.state.self_evolution_monitor = self_evolution_monitor
     # When the governed kernel runs out of process, close the subprocess on
     # shutdown so it is not orphaned.
     app.state.governance_client = governance_client

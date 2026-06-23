@@ -27,6 +27,7 @@ from gap_kernel.governance.corrigibility import KillSwitch
 from gap_kernel.governance.integrity_monitor import GovernanceIntegrityMonitor
 from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.governance.profile import ApplicabilityProfile
+from gap_kernel.governance.self_evolution import SelfEvolutionMonitor
 from gap_kernel.governance.sir import StructuredIntentResolver
 from gap_kernel.models.governance import AuthorizationLevel
 from gap_kernel.models.world import WorldModel
@@ -45,6 +46,7 @@ def build_governed_deployment(
     oob_ledger: Optional[OOBLedger] = None,
     intent_resolver: Optional[StructuredIntentResolver] = None,
     integrity_monitor: Optional[GovernanceIntegrityMonitor] = None,
+    self_evolution_monitor: Optional[SelfEvolutionMonitor] = None,
     kill_switch: Optional[KillSwitch] = None,
     strategy_generator=None,
     max_attempts: int = 3,
@@ -121,6 +123,7 @@ def build_governed_deployment(
         max_attempts=max_attempts,
         intent_resolver=intent_resolver or StructuredIntentResolver(),
         integrity_monitor=integrity_monitor or GovernanceIntegrityMonitor(),
+        self_evolution_monitor=self_evolution_monitor or SelfEvolutionMonitor(),
         governed=True,
         kill_switch=kill_switch,
     )
