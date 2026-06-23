@@ -207,13 +207,128 @@ def _check_cost_ceiling(
     return proposal.estimated_cost > ceiling
 
 
+_INTERACTIVE_ACTIONS = frozenset(
+    {"send_email", "send_sms", "direct_call", "automated_outreach"}
+)
+
+
+def _check_ai_interaction_disclosure(
+    proposal: StrategyProposal,
+    constraint: Constraint,
+    world_state: WorldModel,
+) -> bool:
+    """Transparency (Category 3): an action that interacts directly with an
+    individual must disclose it is an AI system. An interactive action without
+    ``ai_disclosed`` is a violation (the kernel cannot certify disclosure occurred)."""
+    for action in proposal.actions:
+        if action.action_type in _INTERACTIVE_ACTIONS:
+            if not action.parameters.get("ai_disclosed", False):
+                return True
+    return False
+
+
+def _check_fairness_evaluation(
+    proposal: StrategyProposal,
+    constraint: Constraint,
+    world_state: WorldModel,
+) -> bool:
+    """Anti-Discrimination (Category 4): a consequential decision affecting an
+    individual must carry a Fairness Evaluation. An action flagged
+    ``consequential_decision`` without a ``fairness_evaluation`` result is a
+    violation (the disparate-impact gate was not performed)."""
+    for action in proposal.actions:
+        if action.parameters.get("consequential_decision"):
+            if not action.parameters.get("fairness_evaluation"):
+                return True
+    return False
+
+
+def _check_aml_screening(
+    proposal: StrategyProposal,
+    constraint: Constraint,
+    world_state: WorldModel,
+) -> bool:
+    """Financial (Category 5): a financial transaction above the constraint's
+    ``threshold`` (default 0 — screen everything) must carry AML screening AND a
+    sanctions check. A transaction over the threshold missing either is a
+    violation. An action is recognized as a financial transaction only by the
+    ``transaction_amount`` metadata the (domain-specific) Strategy Layer declares;
+    in governed mode the Action Type Registry is the primary gate on financial
+    action types. Fails closed: a present-but-unparseable amount is a violation."""
+    threshold = constraint.threshold if constraint.threshold is not None else 0.0
+    for action in proposal.actions:
+        amount = action.parameters.get("transaction_amount")
+        if amount is None:
+            continue  # not a declared financial transaction
+        try:
+            amt = float(amount)
+        except (TypeError, ValueError):
+            return True  # indeterminable amount on a financial action -> fail closed
+        if amt > threshold:
+            if not (action.parameters.get("aml_screened")
+                    and action.parameters.get("sanctions_checked")):
+                return True
+    return False
+
+
+def _check_minimum_necessary_phi(
+    proposal: StrategyProposal,
+    constraint: Constraint,
+    world_state: WorldModel,
+) -> bool:
+    """Healthcare (Category 6): PHI access must be the minimum necessary. A bulk
+    PHI access (``scope == "bulk"`` or ``record_count`` over the constraint's
+    ``threshold``, default 1) without a ``phi_access_justification`` is a violation
+    (disproportionate access). Fails closed: a present-but-non-numeric
+    ``record_count`` on a PHI access is treated as a violation."""
+    threshold = constraint.threshold if constraint.threshold is not None else 1
+    for action in proposal.actions:
+        if not action.parameters.get("accesses_phi"):
+            continue
+        if action.parameters.get("scope") == "bulk":
+            if not action.parameters.get("phi_access_justification"):
+                return True
+            continue
+        try:
+            record_count = int(action.parameters.get("record_count", 1))
+        except (TypeError, ValueError):
+            return True  # indeterminable record_count on a PHI access -> fail closed
+        if record_count > threshold and not action.parameters.get("phi_access_justification"):
+            return True
+    return False
+
+
+def _check_safety_boundary(
+    proposal: StrategyProposal,
+    constraint: Constraint,
+    world_state: WorldModel,
+) -> bool:
+    """Safety (Category 7): a safety-critical action must affirmatively be within
+    its hard safety boundary. A ``safety_critical`` action that is not declared
+    ``within_safety_boundary`` is a violation (fail closed — the kernel cannot
+    certify the physical-safety bound is respected, and it is not negotiable)."""
+    for action in proposal.actions:
+        if action.parameters.get("safety_critical"):
+            if action.parameters.get("within_safety_boundary") is not True:
+                return True
+    return False
+
+
 # Registry of constraint-name -> concrete evaluator. A constraint whose name is
 # absent here has no concrete check; the kernel cannot prove it satisfied and so
-# fails closed (see _check_constraint_violation and evaluate_proposal).
+# fails closed (see _check_constraint_violation and evaluate_proposal). Covers all
+# eight Regulatory Constraint Categories: data privacy (Cat 1), communications
+# (Cat 2), transparency (Cat 3), anti-discrimination (Cat 4), financial (Cat 5),
+# healthcare (Cat 6), safety (Cat 7); IP/content (Cat 8) is provenance-tracked.
 _CONSTRAINT_EVALUATORS: Dict[str, callable] = {
     "gdpr_consent_required": _check_gdpr_consent,
     "no_contact_outside_hours": _check_contact_hours,
     "cost_ceiling": _check_cost_ceiling,
+    "ai_interaction_disclosure": _check_ai_interaction_disclosure,
+    "fairness_evaluation_required": _check_fairness_evaluation,
+    "aml_screening_required": _check_aml_screening,
+    "minimum_necessary_phi": _check_minimum_necessary_phi,
+    "safety_boundary": _check_safety_boundary,
 }
 
 
