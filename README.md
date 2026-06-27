@@ -102,6 +102,25 @@ Enforcement is structural, not just procedural. By default a governed deployment
 | **Separation of Creation and Validation** | The entity that produces an output cannot be the sole entity that validates it. Independence is structural. |
 | **The Reconciler** | Continuous state reconciliation against declared intents. Detects drift and acts — doesn't wait to be told. |
 
+### Governance Integrity & Safety
+
+Beyond the static Iron Rule, the reference implementation builds the *dynamic*
+controls that catch indirect governance erosion and contain a misbehaving agent.
+Each is fail-closed, adversarially tested, and honestly scoped in the
+**[Conformance Statement](docs/CONFORMANCE.md)** — read it for exactly what is
+enforced versus deployment-configured or planned.
+
+| Mechanism | What It Does |
+|-----------|-------------|
+| **Corrigibility Kill-Switch** | A human-engaged halt that stops both planning and dispatch fail-closed. CGA's "find a path to yes" cannot route around it — it refuses to plan, and provably cannot retarget around a per-entity halt. Propagates to a sub-agent subtree. |
+| **Governance Integrity Monitoring (GIM)** | Five independent rule-based detectors over the decision stream: authorization drift (GIM-1), audit-behavior divergence (GIM-2), threshold-avoidance decomposition (GIM-3), escalation-framing bias (GIM-4), and adversarial collapse (GIM-5). In governed mode the loop *holds and escalates* a flagged action rather than only logging it. |
+| **Independent Authorization Review** | A separate evaluator re-classifies each operation's required authorization level *independently of the kernel's registry* and flags where the system under-classified (e.g. system L0 vs. independent L4). |
+| **Self-Evolution Monitor** | Flags capability gain accumulated through self-modification — burst velocity, upward privilege accrual, and capability-surface expansion — counting only *realized* (executed) modifications. |
+| **Multi-Agent Governance** | Delegation cannot amplify authority (a sub-agent's ceiling is rank-bounded by its parent); constraints and corrigibility propagate down the tree; cross-agent threshold-avoidance decomposition is detected. A live executor *enforces* the bounds at dispatch. |
+| **Structured Intent Resolution (SIR)** | Governs the human→system intent-transfer moment: a five-component intent declaration with confirm/correct, cryptographic seal, and rule-based meta-intent inference. |
+| **Regulatory Constraint Categories** | Fail-closed structural gates for **all 8** spec categories — data privacy, communications, transparency, anti-discrimination, financial (AML + sanctions), healthcare (minimum-necessary PHI), safety, and IP/content — over a signed, runtime-immutable Tier-1 regulatory floor. |
+| **Default Out-of-Process Isolation** | In a governed deployment the kernel — with its private signing key — runs in a separate OS process by default; the agent holds only the public key and a request channel, and every decision it acts on is verified against the kernel signature. |
+
 ## Where GAP Sits
 
 GAP is one layer in the emerging protocol stack for autonomous AI:
@@ -157,7 +176,7 @@ General-Autonomy-Protocol/
 │   ├── strategy/                # Strategy Layer — Proposer/Critic adversarial reasoning
 │   ├── world_model/             # World Model — state tracking, intent comparison
 │   └── __init__.py
-├── tests/                       # Test suite (111 tests, 0 failures)
+├── tests/                       # Test suite (381 tests + property-based fuzzing, ~90% coverage)
 ├── .gitignore
 ├── pyproject.toml               # Project metadata and dependencies
 ├── LICENSE                      # Apache 2.0
