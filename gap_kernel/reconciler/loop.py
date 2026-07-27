@@ -14,6 +14,7 @@ The prototype implements Tier 0 only.
 """
 
 import asyncio
+import logging
 from datetime import datetime, timedelta
 from typing import Callable, Dict, List, Optional
 from uuid import uuid4
@@ -32,6 +33,8 @@ from gap_kernel.models.world import EntityState
 from gap_kernel.governance.action_classifier import ActionTypeClassifier
 from gap_kernel.strategy.cga_loop import CGALoop
 from gap_kernel.world_model.store import WorldModelStore
+
+logger = logging.getLogger("gap_kernel.reconciler")
 
 
 class DriftEvent:
@@ -118,8 +121,7 @@ class DriftWatcher:
                 continue
 
             # Check if entity has been contacted
-            last_contacted = props.get("last_contacted")
-            if last_contacted:
+            if self._contacted_at(props) is not None:
                 continue  # Already contacted
 
             # Check how long the entity has been waiting
@@ -159,6 +161,25 @@ class DriftWatcher:
 
         return None
 
+    def _contacted_at(self, props: dict) -> Optional[datetime]:
+        """When this entity was contacted, or None if it was not.
+
+        Contact suppresses drift detection for the entity, so the evidence has to
+        be evaluable: a value that cannot be read as a timestamp is not proof the
+        obligation was served, and fails closed to "not contacted".
+        """
+        value = props.get("last_contacted")
+        if not value:
+            return None
+        try:
+            if isinstance(value, str):
+                return ensure_utc(datetime.fromisoformat(value))
+            if isinstance(value, datetime):
+                return ensure_utc(value)
+        except (ValueError, TypeError, AttributeError):
+            return None
+        return None
+
     def _extract_sla_minutes(self, objective: str) -> Optional[float]:
         """Extract SLA minutes from an intent objective string."""
         import re
@@ -175,6 +196,10 @@ class DriftWatcher:
 # L2+ action awaiting Out-of-Band approval, or an action held by GIM. All three
 # must be listable and resolvable through the human-facing surface.
 _OPEN_ESCALATION_STATUSES = {"pending", "awaiting_approval", "integrity_hold"}
+
+# How many contained failures the loop keeps for inspection. Bounded because the
+# incident log is in-process memory on a loop that runs forever.
+_MAX_INCIDENTS = 200
 
 
 class ReconcilerLoop:
@@ -240,11 +265,29 @@ class ReconcilerLoop:
         self._drift_watcher = DriftWatcher()
         self._running = False
         self._escalation_queue: List[dict] = []
+        self._incidents: List[dict] = []
 
     @property
     def status(self) -> str:
         """Current reconciler status."""
         return "running" if self._running else "stopped"
+
+    @property
+    def incidents(self) -> List[dict]:
+        """Failures the loop contained rather than died of, plus the circuit
+        breakers it tripped. A contained failure is still a failure of
+        governance: it must be visible to a human, not silently absorbed."""
+        return list(self._incidents)
+
+    @property
+    def circuit_broken_entities(self) -> List[str]:
+        """Entities the circuit breaker has stopped reconciling. Nothing about
+        them is being governed until a human calls ``reset_circuit_breaker``."""
+        return sorted(
+            entity_id
+            for entity_id, state in self._dampening.items()
+            if state.circuit_broken
+        )
 
     @property
     def pending_escalations(self) -> List[dict]:
@@ -285,21 +328,69 @@ class ReconcilerLoop:
         results = []
         intents = list(self._intents.values())
 
-        # Scan all entities for drift
-        for entity_id, entity in self.world_store.model.entities.items():
+        # Scan all entities for drift. Iterate over a snapshot: an executor can
+        # add or remove entities while the cycle runs, and a world model that
+        # changes size mid-scan must not end the cycle.
+        for entity_id, entity in list(self.world_store.model.entities.items()):
             # Check dampening
             if self._is_dampened(entity_id, current_time):
                 continue
 
-            # Run drift detection
-            drift_events = self._drift_watcher.check(entity, intents, current_time)
+            try:
+                # Run drift detection
+                drift_events = self._drift_watcher.check(entity, intents, current_time)
 
-            for drift in drift_events:
-                result = self._handle_drift(drift, intents, current_time)
-                results.append(result)
+                for drift in drift_events:
+                    result = self._handle_drift(drift, intents, current_time)
+                    results.append(result)
+            except Exception as exc:
+                # Contain the failure at the entity: one malformed entity must
+                # not stop the rest of the world being governed this cycle.
+                results.append(self._degrade_entity(entity_id, exc, current_time))
 
         self.world_store.mark_reconciled()
         return results
+
+    def _degrade_entity(
+        self, entity_id: str, exc: Exception, current_time: datetime
+    ) -> dict:
+        """Record a contained per-entity failure and count it against the entity.
+
+        Counting matters: an entity that fails every cycle would otherwise be
+        retried forever. Counting it as a failure lets the circuit breaker stop
+        re-queueing it, and the incident is what tells a human it is unreconciled.
+        """
+        logger.exception("Reconciliation failed for entity %s", entity_id)
+        incident = self._record_incident(
+            "entity_failure", entity_id, repr(exc), current_time
+        )
+        self._update_dampening(entity_id, True, current_time)
+        return {
+            "entity_id": entity_id,
+            "verdict": "degraded",
+            "incident_id": incident["id"],
+            "error": incident["detail"],
+            "execution_success": False,
+        }
+
+    def _record_incident(
+        self,
+        kind: str,
+        entity_id: Optional[str],
+        detail: str,
+        current_time: datetime,
+    ) -> dict:
+        """Append a contained-failure record to the bounded incident log."""
+        incident = {
+            "id": f"inc_{uuid4().hex[:12]}",
+            "kind": kind,
+            "entity_id": entity_id,
+            "detail": detail,
+            "at": current_time.isoformat(),
+        }
+        self._incidents.append(incident)
+        del self._incidents[:-_MAX_INCIDENTS]
+        return incident
 
     def _handle_drift(
         self,
@@ -346,12 +437,23 @@ class ReconcilerLoop:
         # Record drift event in world model
         self.world_store.record_drift_event(drift.to_dict())
 
-        # Update dampening state. An action that was HELD (integrity_hold) did not
-        # succeed and must count toward the circuit breaker — otherwise a held
-        # target would be retried (and re-escalated) every cooldown forever
-        # without the breaker ever tripping.
-        held = cga_result.escalated or cga_result.integrity_hold
-        self._update_dampening(drift.entity_id, held, current_time)
+        # Update dampening state. Only a cycle that actually executed something
+        # moved the entity forward; escalated, HELD (integrity_hold) and
+        # awaiting_approval outcomes all leave it exactly as blocked as before,
+        # so each must count toward the circuit breaker. Otherwise a blocked
+        # target is re-planned every cooldown forever — appending a lineage
+        # record each time — without the breaker ever tripping. A kill-switch
+        # halt is a deliberate human stop rather than a failure of this entity,
+        # so it is cooled down but not counted (None).
+        resolved = bool(
+            cga_result.execution_result is not None
+            and cga_result.execution_result.success
+        )
+        self._update_dampening(
+            drift.entity_id,
+            None if cga_result.halted else not resolved,
+            current_time,
+        )
 
         # Operational learning
         self.learning.learn_from_lineage(lineage_record)
@@ -359,14 +461,24 @@ class ReconcilerLoop:
         # Route to a human: either an escalation, OR an L2+ action that governance
         # approved but that is held pending Out-of-Band approval. Without this, an
         # awaiting_approval outcome would be silently dropped (the high-stakes
-        # action neither executes nor reaches a human). Dedupe: if this entity
-        # already has an OPEN (unresolved) escalation, don't pile on a duplicate
-        # every cycle — one open item per entity until a human resolves it.
+        # action neither executes nor reaches a human). Dedupe: don't pile on a
+        # duplicate every cycle — one open item per entity AND KIND. The kind is
+        # part of the key because the kinds are different problems needing
+        # different human responses: an entity already awaiting approval that GIM
+        # then flags for integrity would otherwise have the hold silently dropped,
+        # which is exactly the dead letter this queue exists to prevent.
         needs_human = (
             cga_result.escalated or cga_result.awaiting_approval or cga_result.integrity_hold
         )
+        kind = (
+            "awaiting_approval" if cga_result.awaiting_approval
+            else "integrity_hold" if cga_result.integrity_hold
+            else "pending"
+        )
         already_open = any(
-            e["entity_id"] == drift.entity_id and e["status"] in _OPEN_ESCALATION_STATUSES
+            e["entity_id"] == drift.entity_id
+            and e["status"] in _OPEN_ESCALATION_STATUSES
+            and e.get("kind", e["status"]) == kind
             for e in self._escalation_queue
         )
         if needs_human and not already_open:
@@ -383,11 +495,8 @@ class ReconcilerLoop:
                     for d in cga_result.decisions
                     if d.rejection_reason
                 ],
-                "status": (
-                    "awaiting_approval" if cga_result.awaiting_approval
-                    else "integrity_hold" if cga_result.integrity_hold
-                    else "pending"
-                ),
+                "kind": kind,
+                "status": kind,
                 "created_at": current_time.isoformat(),
             }
             self._escalation_queue.append(escalation)
@@ -421,9 +530,15 @@ class ReconcilerLoop:
         return False
 
     def _update_dampening(
-        self, entity_id: str, failed: bool, current_time: datetime
+        self, entity_id: str, failed: Optional[bool], current_time: datetime
     ) -> None:
-        """Update dampening state after processing a drift event."""
+        """Update dampening state after processing a drift event.
+
+        ``failed`` may be None for an outcome that says nothing about the entity
+        (a human halt): the cooldown still applies, but the consecutive-failure
+        count that drives the circuit breaker is left untouched, so a halt cannot
+        leave an entity circuit-broken once the halt is lifted.
+        """
         state = self._dampening.get(entity_id)
         if not state:
             state = DampeningState(
@@ -437,12 +552,63 @@ class ReconcilerLoop:
             seconds=self.config.cooldown_seconds
         )
 
+        if failed is None:
+            return
+
         if failed:
             state.consecutive_failures += 1
-            if state.consecutive_failures >= self.config.circuit_breaker_threshold:
+            if (
+                state.consecutive_failures >= self.config.circuit_breaker_threshold
+                and not state.circuit_broken
+            ):
                 state.circuit_broken = True
+                state.circuit_broken_at = current_time
+                logger.error(
+                    "Circuit breaker tripped for entity %s after %d consecutive "
+                    "failures; it is no longer being reconciled",
+                    entity_id,
+                    state.consecutive_failures,
+                )
+                self._record_incident(
+                    "circuit_breaker_tripped",
+                    entity_id,
+                    (
+                        f"{state.consecutive_failures} consecutive failures reached "
+                        f"the threshold of {self.config.circuit_breaker_threshold}; "
+                        f"reconciliation stopped until a human resets it"
+                    ),
+                    current_time,
+                )
         else:
             state.consecutive_failures = 0
+
+    def reset_circuit_breaker(self, entity_id: str, reset_by: str = "operator") -> bool:
+        """Resume reconciling an entity the circuit breaker stopped.
+
+        The breaker is otherwise a terminal state: nothing clears it, so the
+        entity is never governed again for the life of the process. Returns False
+        if that entity has no tripped breaker.
+        """
+        state = self._dampening.get(entity_id)
+        if state is None or not state.circuit_broken:
+            return False
+
+        state.circuit_broken = False
+        state.circuit_broken_at = None
+        state.consecutive_failures = 0
+        state.cooldown_until = None
+        self._record_incident(
+            "circuit_breaker_reset", entity_id, f"reset by {reset_by}", utcnow()
+        )
+        return True
+
+    def reset_all_circuit_breakers(self, reset_by: str = "operator") -> List[str]:
+        """Resume reconciling every circuit-broken entity. Returns their ids."""
+        reset = [
+            entity_id for entity_id in self.circuit_broken_entities
+            if self.reset_circuit_breaker(entity_id, reset_by)
+        ]
+        return reset
 
     def attach_escalation_framing(
         self,
@@ -530,14 +696,23 @@ class ReconcilerLoop:
         return self._integrity_monitor.check_escalation_framing_bias()
 
     async def run_async(self, stop_event: Optional[asyncio.Event] = None) -> None:
-        """Run the reconciler loop asynchronously."""
+        """Run the reconciler loop asynchronously.
+
+        The loop stops for one reason only: the stop event. A cycle that raises
+        is contained and recorded — governance that stops running is governance
+        that stops governing, and it would stop silently.
+        """
         self._running = True
         if stop_event is None:
             stop_event = asyncio.Event()
 
         try:
             while not stop_event.is_set():
-                self.reconcile_once()
+                try:
+                    self.reconcile_once()
+                except Exception as exc:
+                    logger.exception("Reconciliation cycle failed")
+                    self._record_incident("cycle_failure", None, repr(exc), utcnow())
                 try:
                     await asyncio.wait_for(
                         stop_event.wait(),

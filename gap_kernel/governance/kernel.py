@@ -22,7 +22,7 @@ from uuid import uuid4
 
 from croniter import croniter
 
-from gap_kernel._time import utcnow
+from gap_kernel._time import ensure_utc, utcnow
 from gap_kernel.crypto.signing import PublicKeyRegistry, generate_keypair, sign
 from gap_kernel.errors import GovernanceConfigError
 from gap_kernel.governance.dynamic_risk import (
@@ -122,16 +122,20 @@ def _check_constraint_violation(
     proposal: StrategyProposal,
     constraint: Constraint,
     world_state: WorldModel,
+    allow_untracked_targets: bool = True,
 ) -> bool:
     """
     Check if a proposal violates a constraint.
 
     Uses a rule-based evaluation engine that maps constraint names to
     concrete checks. This is the extensible policy evaluation core.
+
+    ``allow_untracked_targets`` is threaded to every evaluator so the
+    world-model-backed ones share one posture; see ``GovernanceKernel``.
     """
     check_fn = _CONSTRAINT_EVALUATORS.get(constraint.name)
     if check_fn:
-        return check_fn(proposal, constraint, world_state)
+        return check_fn(proposal, constraint, world_state, allow_untracked_targets)
 
     # Fail-closed (SA-2 / Fix 1): a constraint with no registered evaluator
     # cannot be certified as satisfied, so it is treated as a violation.
@@ -147,8 +151,15 @@ def _check_gdpr_consent(
     proposal: StrategyProposal,
     constraint: Constraint,
     world_state: WorldModel,
+    allow_untracked_targets: bool = True,
 ) -> bool:
-    """Check if proposal involves contacting an entity without GDPR consent."""
+    """Check if proposal involves contacting an entity without GDPR consent.
+
+    The gate is world-model-backed, and the Strategy Layer authors ``target``.
+    When ``allow_untracked_targets`` is False, a target the world model does not
+    carry — or carries without a jurisdiction — is a violation: the gate has
+    nothing to evaluate, and an unevaluable HARD constraint must not pass.
+    """
     for action in proposal.actions:
         if action.action_type in ("send_email", "send_sms", "direct_call", "automated_outreach"):
             target_id = action.target
@@ -156,6 +167,8 @@ def _check_gdpr_consent(
             if entity:
                 props = entity.properties
                 geo = props.get("geo", props.get("jurisdiction", ""))
+                if not geo and not allow_untracked_targets:
+                    return True
                 is_eu = geo.upper() in (
                     "EU", "EEA", "DE", "FR", "IT", "ES", "NL", "BE", "AT",
                     "SE", "DK", "FI", "IE", "PT", "GR", "PL", "CZ", "RO",
@@ -166,6 +179,8 @@ def _check_gdpr_consent(
                     consent = props.get("gdpr_consent", False)
                     if not consent:
                         return True
+            elif not allow_untracked_targets:
+                return True
             elif action.requires_consent:
                 return True
     return False
@@ -175,17 +190,27 @@ def _check_contact_hours(
     proposal: StrategyProposal,
     constraint: Constraint,
     world_state: WorldModel,
+    allow_untracked_targets: bool = True,
 ) -> bool:
-    """Check if proposal involves contacting an entity outside allowed hours."""
+    """Check if proposal involves contacting an entity outside allowed hours.
+
+    Same posture as the GDPR gate: when ``allow_untracked_targets`` is False, an
+    absent target — or one carrying no ``local_hour`` — leaves the window
+    unknowable, which is a violation rather than a pass.
+    """
     for action in proposal.actions:
         if action.action_type in ("send_email", "send_sms", "direct_call", "automated_outreach"):
             target_id = action.target
             entity = world_state.entities.get(target_id)
             if entity:
                 local_hour = entity.properties.get("local_hour")
-                if local_hour is not None:
-                    if local_hour >= 22 or local_hour < 7:
+                if local_hour is None:
+                    if not allow_untracked_targets:
                         return True
+                elif local_hour >= 22 or local_hour < 7:
+                    return True
+            elif not allow_untracked_targets:
+                return True
     return False
 
 
@@ -193,6 +218,7 @@ def _check_cost_ceiling(
     proposal: StrategyProposal,
     constraint: Constraint,
     world_state: WorldModel,
+    allow_untracked_targets: bool = True,
 ) -> bool:
     """Check if proposal's estimated cost exceeds the ceiling.
 
@@ -217,6 +243,7 @@ def _check_ai_interaction_disclosure(
     proposal: StrategyProposal,
     constraint: Constraint,
     world_state: WorldModel,
+    allow_untracked_targets: bool = True,
 ) -> bool:
     """Transparency (Category 3): an action that interacts directly with an
     individual must disclose it is an AI system. An interactive action without
@@ -232,6 +259,7 @@ def _check_fairness_evaluation(
     proposal: StrategyProposal,
     constraint: Constraint,
     world_state: WorldModel,
+    allow_untracked_targets: bool = True,
 ) -> bool:
     """Anti-Discrimination (Category 4): a consequential decision affecting an
     individual must carry a Fairness Evaluation. An action flagged
@@ -248,6 +276,7 @@ def _check_aml_screening(
     proposal: StrategyProposal,
     constraint: Constraint,
     world_state: WorldModel,
+    allow_untracked_targets: bool = True,
 ) -> bool:
     """Financial (Category 5): a financial transaction above the constraint's
     ``threshold`` (default 0 — screen everything) must carry AML screening AND a
@@ -276,6 +305,7 @@ def _check_minimum_necessary_phi(
     proposal: StrategyProposal,
     constraint: Constraint,
     world_state: WorldModel,
+    allow_untracked_targets: bool = True,
 ) -> bool:
     """Healthcare (Category 6): PHI access must be the minimum necessary. A bulk
     PHI access (``scope == "bulk"`` or ``record_count`` over the constraint's
@@ -303,6 +333,7 @@ def _check_safety_boundary(
     proposal: StrategyProposal,
     constraint: Constraint,
     world_state: WorldModel,
+    allow_untracked_targets: bool = True,
 ) -> bool:
     """Safety (Category 7): a safety-critical action must affirmatively be within
     its hard safety boundary. A ``safety_critical`` action that is not declared
@@ -319,6 +350,7 @@ def _check_ip_content_risk(
     proposal: StrategyProposal,
     constraint: Constraint,
     world_state: WorldModel,
+    allow_untracked_targets: bool = True,
 ) -> bool:
     """IP / Content (Category 8): a content-generating action must carry an IP-risk
     assessment, and high-risk output (substantial copyright similarity, third-party
@@ -466,6 +498,34 @@ def _determine_auth_level(max_risk: int) -> AuthorizationLevel:
         return AuthorizationLevel.L4
 
 
+_IMPACT_SCOPE_WEIGHT = {"local": 0, "team": 1, "org": 2, "external": 3}
+_REVERSIBILITY_WEIGHT = {"reversible": 0, "partially_reversible": 1, "irreversible": 2}
+_BLAST_RADIUS_WEIGHT = {"narrow": 0, "moderate": 1, "wide": 2}
+
+_RANK_TO_AUTH = {rank: level for level, rank in _AUTH_RANK.items()}
+
+
+def _risk_weight(table: Dict[str, int], descriptor: str) -> int:
+    """Score one risk descriptor. An unrecognized descriptor takes the table's
+    maximum weight — the kernel cannot certify an unknown descriptor low-risk."""
+    return table.get(descriptor, max(table.values()))
+
+
+def _risk_derived_floor(risk_profile: RiskProfile) -> AuthorizationLevel:
+    """The lowest authorization level an action type's risk profile permits.
+
+    Registration below this floor is refused, so a new type cannot be filed with
+    a gate weaker than the harm it can do (an irreversible, org-wide, wide-blast
+    action cannot be registered as L0 "fully autonomous").
+    """
+    score = (
+        _risk_weight(_IMPACT_SCOPE_WEIGHT, risk_profile.impact_scope)
+        + _risk_weight(_REVERSIBILITY_WEIGHT, risk_profile.reversibility)
+        + _risk_weight(_BLAST_RADIUS_WEIGHT, risk_profile.blast_radius)
+    )
+    return _RANK_TO_AUTH[min(max(_AUTH_RANK.values()), (score + 1) // 2)]
+
+
 def _determine_auth_tier(max_risk: int) -> str:
     """
     Legacy graduated authorization model (string-based).
@@ -569,7 +629,14 @@ def _detect_intent_conflicts(
     proposal: StrategyProposal,
     intents: List[IntentVector],
 ) -> Optional[List[IntentVector]]:
-    """Detect if the proposal creates conflicts between intents."""
+    """Detect if the proposal creates conflicts between intents.
+
+    Probes each other intent's hard constraints against a SYNTHETIC empty world,
+    so it deliberately keeps the permissive untracked-target posture: every
+    target is untracked here by construction, and failing closed would report a
+    conflict for every world-model-backed constraint any other intent declares.
+    The authoritative evaluation against the real world model is in ``_evaluate``.
+    """
     conflicting = []
 
     for intent in intents:
@@ -626,10 +693,16 @@ class GovernanceKernel:
     Immutable from below. Only human-declared intents define its behavior.
 
     Maintains:
-    - Action Type Registry: categories of autonomous action with governance config
+    - Action Type Registry: categories of autonomous action with governance config,
+      seeded from the signed Applicability Profile and closed to runtime writes
+      in governed mode
     - Multi-Phase Authorization: multiple governance gates per action lifecycle
     - Structured Uncertainty: epistemic state at moment of authorization
     - Separation of Creation and Validation enforcement
+
+    A governed kernel owns the two inputs an agent would otherwise author into
+    the evaluation: the clock (``_resolve_time``) and whether a world-model-backed
+    gate may pass on an untracked target (``allow_untracked_targets``).
     """
 
     def __init__(
@@ -642,6 +715,7 @@ class GovernanceKernel:
         public_key_hex: Optional[str] = None,
         kernel_key_id: str = "governance_kernel",
         governed: bool = False,
+        allow_untracked_targets: Optional[bool] = None,
     ):
         # Governed mode fails closed: it REQUIRES the industry-specific regulatory
         # floor (an Applicability Profile) and forces strict action typing. A
@@ -653,6 +727,22 @@ class GovernanceKernel:
                 "A governed GovernanceKernel requires an Applicability Profile "
                 "(the regulatory floor); refusing to run ungoverned."
             )
+        # A kernel is governed once it carries a signed profile, whether or not
+        # the caller passed governed=True: the profile IS the declared floor, and
+        # the guarantees below (registry immutability, kernel-owned clock) hold
+        # for anything running against one.
+        self._governed = bool(governed or applicability_profile is not None)
+        # World-model-backed HARD constraints (GDPR consent, contact hours) can
+        # only be evaluated against facts the world model carries, and the
+        # Strategy Layer authors the target. Governed mode therefore fails closed:
+        # a target the world model does not track leaves the gate with nothing to
+        # evaluate, which is a violation, not a pass. Open/prototype mode keeps
+        # the permissive behavior; either posture can be set explicitly.
+        self._allow_untracked_targets = (
+            (not self._governed)
+            if allow_untracked_targets is None
+            else allow_untracked_targets
+        )
         self._action_type_registry: Dict[str, ActionTypeSpec] = dict(_BASELINE_ACTION_TYPES)
         self._dynamic_risk_engine = DynamicRiskEngine(
             escalation_config or EscalationConfig()
@@ -699,6 +789,15 @@ class GovernanceKernel:
                 )
                 for c in applicability_profile.tier1_constraints
             ]
+            # The Action Type Registry is governance configuration, so it rides
+            # inside the signed profile and inherits its verification: profile
+            # types layer over the baseline set, and no runtime call can rewrite
+            # them (see register_action_type). The dict key is authoritative —
+            # it is what the evaluation path looks an action_type_id up by.
+            self._action_type_registry.update({
+                type_id: spec.model_copy(update={"type_id": type_id})
+                for type_id, spec in applicability_profile.action_types.items()
+            })
 
     # --- Action Type Registry ---
 
@@ -716,9 +815,47 @@ class GovernanceKernel:
         registered_by: str,
     ) -> ActionTypeSpec:
         """
-        Register a new action type. This is a governed action requiring
-        human authorization — autonomous systems cannot register new types.
+        Register a NEW action type. Registering is a governed change to the
+        policy set, so it is not available to the running system on demand.
+
+        A governed kernel refuses outright: its registry comes from the signed
+        Applicability Profile, where the authority's signature — not a free-text
+        ``registered_by`` string — is the human authorization.
+
+        An open/prototype kernel keeps the call as a monotonic ratchet. A type
+        may be ADDED, but never replaces an existing one and never registers
+        below the authorization floor its own risk profile implies. Both
+        refusals raise :class:`GovernanceConfigError`.
         """
+        if self._governed:
+            raise GovernanceConfigError(
+                f"Action type '{spec.type_id}' cannot be registered at runtime by "
+                f"a governed kernel. Registered types are carried in the signed "
+                f"Applicability Profile; a runtime write would be an unsigned "
+                f"change to the governance configuration."
+            )
+
+        existing = self._action_type_registry.get(spec.type_id)
+        if existing is not None:
+            raise GovernanceConfigError(
+                f"Action type '{spec.type_id}' is already registered at "
+                f"{existing.default_authorization_level.value} and cannot be "
+                f"replaced. The Action Type Registry is a monotonic ratchet: "
+                f"re-registering an existing type would let a weaker "
+                f"authorization gate overwrite the one currently in force."
+            )
+
+        floor = _risk_derived_floor(spec.risk_profile)
+        if not _satisfies_auth(spec.default_authorization_level, floor):
+            raise GovernanceConfigError(
+                f"Action type '{spec.type_id}' declares "
+                f"{spec.default_authorization_level.value}, but its risk profile "
+                f"(impact={spec.risk_profile.impact_scope}, "
+                f"reversibility={spec.risk_profile.reversibility}, "
+                f"blast_radius={spec.risk_profile.blast_radius}) requires at "
+                f"least {floor.value}."
+            )
+
         spec.registered_by = registered_by
         spec.registered_at = utcnow()
         self._action_type_registry[spec.type_id] = spec
@@ -727,6 +864,21 @@ class GovernanceKernel:
     def validate_action_type(self, action_type: str) -> bool:
         """Check if an action type is registered. Unregistered types are rejected."""
         return action_type in self._action_type_registry
+
+    # --- Evaluation clock ---
+
+    def _resolve_time(self, current_time: Optional[datetime]) -> datetime:
+        """The clock an evaluation runs against.
+
+        A governed kernel reads its own clock and IGNORES ``current_time``. The
+        caller of an evaluation is the system being governed, and the evaluation
+        time decides which scheduled constraints are active and what timestamp
+        goes into the signed decision — so a caller-named time is a caller-chosen
+        policy set. Only an open/prototype kernel honours the supplied value.
+        """
+        if self._governed or current_time is None:
+            return utcnow()
+        return ensure_utc(current_time)
 
     # --- Multi-Phase Authorization ---
 
@@ -744,16 +896,20 @@ class GovernanceKernel:
 
         Each phase evaluates against different information. Authorization at
         one phase does not automatically satisfy subsequent phases.
+
+        ``current_time`` is authoritative only in open/prototype mode; a governed
+        kernel ignores it and uses its own clock (see ``_resolve_time``).
         """
-        if current_time is None:
-            current_time = utcnow()
+        current_time = self._resolve_time(current_time)
 
         active_constraints = self._get_active_constraints(intents, current_time)
 
         hard_violations = []
         for constraint in active_constraints:
             if constraint.type == ConstraintType.HARD:
-                if _check_constraint_violation(proposal, constraint, world_state):
+                if _check_constraint_violation(
+                    proposal, constraint, world_state, self._allow_untracked_targets
+                ):
                     hard_violations.append(constraint.name)
 
         if hard_violations:
@@ -839,6 +995,14 @@ class GovernanceKernel:
 
         The signature lets the Execution Fabric confirm the decision came from
         this kernel and was not forged or altered downstream.
+
+        ``current_time`` is authoritative ONLY in open/prototype mode. A governed
+        kernel ignores it and reads its own clock for both constraint activation
+        and the timestamp it signs into the decision — otherwise a caller could
+        name a time outside a scheduled HARD constraint's window, drop that
+        constraint out of the active set, and collect a genuinely kernel-signed
+        approval. The parameter stays accepted so in-process callers and tests
+        that drive the clock keep working against an open kernel.
         """
         decision = self._evaluate(
             proposal, intents, world_state, current_time, action_type_id
@@ -862,8 +1026,7 @@ class GovernanceKernel:
         Returns APPROVED, REJECTED (with reason), or ESCALATE.
         Includes Structured Uncertainty declaration on every decision.
         """
-        if current_time is None:
-            current_time = utcnow()
+        current_time = self._resolve_time(current_time)
 
         decision_id = f"gov_{uuid4().hex[:12]}"
 
@@ -918,7 +1081,9 @@ class GovernanceKernel:
         hard_violations = []
         for constraint in active_constraints:
             if constraint.type == ConstraintType.HARD:
-                if _check_constraint_violation(proposal, constraint, world_state):
+                if _check_constraint_violation(
+                    proposal, constraint, world_state, self._allow_untracked_targets
+                ):
                     hard_violations.append(constraint.name)
 
         # 3. Check soft constraints (violations logged but not blocking). A SOFT
@@ -928,7 +1093,7 @@ class GovernanceKernel:
         for constraint in active_constraints:
             if constraint.type == ConstraintType.SOFT:
                 if _constraint_has_evaluator(constraint) and _check_constraint_violation(
-                    proposal, constraint, world_state
+                    proposal, constraint, world_state, self._allow_untracked_targets
                 ):
                     soft_violations.append(constraint.name)
 
