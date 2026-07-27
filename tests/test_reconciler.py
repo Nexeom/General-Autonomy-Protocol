@@ -1,8 +1,9 @@
 """Tests for the Reconciler Loop."""
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 
+from gap_kernel._time import utcnow
 from gap_kernel.execution.fabric import ExecutionFabric
 from gap_kernel.governance.integrity_monitor import GovernanceIntegrityMonitor
 from gap_kernel.governance.kernel import GovernanceKernel
@@ -33,7 +34,7 @@ def _make_sla_intent() -> IntentVector:
         ],
         soft_constraints=[],
         created_by="test",
-        created_at=datetime.utcnow(),
+        created_at=utcnow(),
     )
 
 
@@ -44,7 +45,7 @@ class TestDriftWatcher:
         intent = _make_sla_intent()
 
         # Entity created 8 minutes ago (70% of 10-minute SLA)
-        created_at = datetime.utcnow() - timedelta(minutes=8)
+        created_at = utcnow() - timedelta(minutes=8)
         entity = EntityState(
             entity_type="lead",
             entity_id="lead_123",
@@ -52,7 +53,7 @@ class TestDriftWatcher:
                 "created_at": created_at.isoformat(),
                 "value": 50000,
             },
-            last_updated=datetime.utcnow(),
+            last_updated=utcnow(),
             source="crm",
             obligations=["lead_response_sla"],
         )
@@ -70,10 +71,10 @@ class TestDriftWatcher:
             entity_type="lead",
             entity_id="lead_123",
             properties={
-                "created_at": (datetime.utcnow() - timedelta(minutes=8)).isoformat(),
-                "last_contacted": datetime.utcnow().isoformat(),
+                "created_at": (utcnow() - timedelta(minutes=8)).isoformat(),
+                "last_contacted": utcnow().isoformat(),
             },
-            last_updated=datetime.utcnow(),
+            last_updated=utcnow(),
             source="crm",
             obligations=["lead_response_sla"],
         )
@@ -91,9 +92,9 @@ class TestDriftWatcher:
             entity_type="lead",
             entity_id="lead_123",
             properties={
-                "created_at": (datetime.utcnow() - timedelta(minutes=2)).isoformat(),
+                "created_at": (utcnow() - timedelta(minutes=2)).isoformat(),
             },
-            last_updated=datetime.utcnow(),
+            last_updated=utcnow(),
             source="crm",
             obligations=["lead_response_sla"],
         )
@@ -132,7 +133,7 @@ class TestReconcilerLoop:
         self.reconciler.register_intent(intent)
 
         # Add an EU lead that's been waiting 8 minutes
-        created_at = datetime.utcnow() - timedelta(minutes=8)
+        created_at = utcnow() - timedelta(minutes=8)
         entity = EntityState(
             entity_type="lead",
             entity_id="lead_4821",
@@ -144,7 +145,7 @@ class TestReconcilerLoop:
                 "local_hour": 14,
                 "created_at": created_at.isoformat(),
             },
-            last_updated=datetime.utcnow(),
+            last_updated=utcnow(),
             source="crm",
             obligations=["lead_response_sla"],
         )
@@ -167,7 +168,7 @@ class TestReconcilerLoop:
         intent = _make_sla_intent()
         self.reconciler.register_intent(intent)
 
-        created_at = datetime.utcnow() - timedelta(minutes=8)
+        created_at = utcnow() - timedelta(minutes=8)
         entity = EntityState(
             entity_type="lead",
             entity_id="lead_damp",
@@ -176,7 +177,7 @@ class TestReconcilerLoop:
                 "geo": "US",
                 "gdpr_consent": True,
             },
-            last_updated=datetime.utcnow(),
+            last_updated=utcnow(),
             source="crm",
             obligations=["lead_response_sla"],
         )
@@ -205,14 +206,14 @@ class TestReconcilerLoop:
             ],
             soft_constraints=[],
             created_by="test",
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
         )
         # Override config with low retry budget
         self.config.max_retry_budget = 2
         self.reconciler.config = self.config
         self.reconciler.register_intent(intent)
 
-        created_at = datetime.utcnow() - timedelta(minutes=8)
+        created_at = utcnow() - timedelta(minutes=8)
         entity = EntityState(
             entity_type="lead",
             entity_id="lead_esc",
@@ -222,7 +223,7 @@ class TestReconcilerLoop:
                 "gdpr_consent": False,
                 "local_hour": 14,
             },
-            last_updated=datetime.utcnow(),
+            last_updated=utcnow(),
             source="crm",
             obligations=["impossible_intent"],
         )
@@ -259,13 +260,13 @@ def _drifting_world_and_intent():
     """A world with one EU lead in active SLA drift + its intent (mirrors above)."""
     world_store = WorldModelStore()
     intent = _make_sla_intent()
-    created_at = datetime.utcnow() - timedelta(minutes=8)
+    created_at = utcnow() - timedelta(minutes=8)
     world_store.upsert_entity(EntityState(
         entity_type="lead", entity_id="lead_4821",
         properties={"name": "EU Lead", "value": 50000, "geo": "US",
                     "gdpr_consent": True, "local_hour": 14,
                     "created_at": created_at.isoformat()},
-        last_updated=datetime.utcnow(), source="crm", obligations=["lead_response_sla"],
+        last_updated=utcnow(), source="crm", obligations=["lead_response_sla"],
     ))
     return world_store, intent
 
@@ -430,12 +431,12 @@ def test_reconciler_uses_one_persistent_shared_monitor():
     over two drifting entities feeds both their decisions into the SAME monitor
     instance, so erosion spanning multiple drift events is detectable."""
     world_store, intent = _drifting_world_and_intent()
-    created_at = (datetime.utcnow() - timedelta(minutes=8)).isoformat()
+    created_at = (utcnow() - timedelta(minutes=8)).isoformat()
     world_store.upsert_entity(EntityState(
         entity_type="lead", entity_id="lead_4822",
         properties={"name": "EU Lead 2", "value": 40000, "geo": "US",
                     "gdpr_consent": True, "local_hour": 14, "created_at": created_at},
-        last_updated=datetime.utcnow(), source="crm", obligations=["lead_response_sla"],
+        last_updated=utcnow(), source="crm", obligations=["lead_response_sla"],
     ))
     monitor = GovernanceIntegrityMonitor(decomposition_count_threshold=99)  # won't hold
     reconciler = _reconciler_with(world_store, monitor=monitor, block=True)

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import List, Optional, Set
+from gap_kernel._time import utcnow
 
 
 class KillSwitch:
@@ -48,7 +49,7 @@ class KillSwitch:
         self._engaged.add(scope)
         self._log.append({
             "event": "engage", "scope": scope, "reason": reason,
-            "by": engaged_by, "at": (at or datetime.utcnow()).isoformat(),
+            "by": engaged_by, "at": (at or utcnow()).isoformat(),
         })
 
     def disengage(
@@ -61,7 +62,7 @@ class KillSwitch:
         self._engaged.discard(scope)
         self._log.append({
             "event": "disengage", "scope": scope,
-            "by": disengaged_by, "at": (at or datetime.utcnow()).isoformat(),
+            "by": disengaged_by, "at": (at or utcnow()).isoformat(),
         })
 
     def is_engaged(self, scope: Optional[str] = None) -> bool:

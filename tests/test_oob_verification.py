@@ -9,10 +9,11 @@ adversarial cases: forged signature, expired approval, unknown approver key,
 tampered expiry, per-approver ceiling, and replay.
 """
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 
+from gap_kernel._time import utcnow
 from gap_kernel.crypto.signing import PublicKeyRegistry, generate_keypair, sign
 from gap_kernel.execution.fabric import ExecutionFabric, OOBVerificationError
 from gap_kernel.models.governance import (
@@ -39,12 +40,12 @@ def _proposal(proposal_id=PID, action_type="send_email", target="lead_001"):
         ],
         estimated_cost=0.10,
         rationale="Test",
-        generated_at=datetime.utcnow(),
+        generated_at=utcnow(),
     )
 
 
 def _world():
-    return WorldModel(entities={}, last_reconciled=datetime.utcnow())
+    return WorldModel(entities={}, last_reconciled=utcnow())
 
 
 def _decision(*, decision_id="gov_oob_001", proposal_id=PID, auth_level=AuthorizationLevel.L2,
@@ -56,10 +57,10 @@ def _decision(*, decision_id="gov_oob_001", proposal_id=PID, auth_level=Authoriz
         authorization_level=auth_level,
         temporal_context={},
         policy_snapshot={},
-        evaluated_at=datetime.utcnow(),
+        evaluated_at=utcnow(),
         human_approver_public_key_id=key_id,
-        human_approval_timestamp=datetime.utcnow(),
-        human_approval_valid_until=valid_until or (datetime.utcnow() + timedelta(minutes=5)),
+        human_approval_timestamp=utcnow(),
+        human_approval_valid_until=valid_until or (utcnow() + timedelta(minutes=5)),
     )
 
 
@@ -99,7 +100,7 @@ def test_below_l2_requires_no_oob(level):
     decision = GovernanceDecision(
         id="gov_low", proposal_id=PID, verdict=GovernanceVerdict.APPROVED,
         authorization_level=level, temporal_context={}, policy_snapshot={},
-        evaluated_at=datetime.utcnow(),
+        evaluated_at=utcnow(),
     )
     assert fabric.execute(_proposal(), decision).success is True
 
@@ -146,7 +147,7 @@ def test_signature_from_unknown_key_rejected(keypair):
 
 def test_expired_approval_rejected(fabric_with_key, keypair):
     private_hex, _ = keypair
-    decision = _signed_decision(private_hex, valid_until=datetime.utcnow() - timedelta(minutes=1))
+    decision = _signed_decision(private_hex, valid_until=utcnow() - timedelta(minutes=1))
     with pytest.raises(OOBVerificationError, match="expired"):
         fabric_with_key.execute(_proposal(), decision)
 
@@ -154,7 +155,7 @@ def test_expired_approval_rejected(fabric_with_key, keypair):
 def test_tampered_expiry_rejected(fabric_with_key, keypair):
     private_hex, _ = keypair
     decision = _signed_decision(private_hex)
-    decision.human_approval_valid_until = datetime.utcnow() + timedelta(days=365)  # extend, unsigned
+    decision.human_approval_valid_until = utcnow() + timedelta(days=365)  # extend, unsigned
     with pytest.raises(OOBVerificationError, match="signature is invalid"):
         fabric_with_key.execute(_proposal(), decision)
 
@@ -218,10 +219,10 @@ def test_distinct_decisions_each_execute(keypair):
 def test_model_has_crypto_oob_fields():
     decision = GovernanceDecision(
         id="gov_fields", proposal_id="prop", verdict=GovernanceVerdict.APPROVED,
-        temporal_context={}, policy_snapshot={}, evaluated_at=datetime.utcnow(),
+        temporal_context={}, policy_snapshot={}, evaluated_at=utcnow(),
         human_approval_signature="deadbeef", human_approver_public_key_id=KEY_ID,
-        human_approval_timestamp=datetime.utcnow(),
-        human_approval_valid_until=datetime.utcnow() + timedelta(minutes=5),
+        human_approval_timestamp=utcnow(),
+        human_approval_valid_until=utcnow() + timedelta(minutes=5),
     )
     assert decision.human_approval_signature == "deadbeef"
     assert decision.human_approver_public_key_id == KEY_ID

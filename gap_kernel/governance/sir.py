@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import Callable, List, Optional
 from uuid import uuid4
 
+from gap_kernel._time import utcnow
 from gap_kernel.crypto.signing import sign, verify
 from gap_kernel.models.governance import AuthorizationLevel
 from gap_kernel.models.sir import (
@@ -200,7 +201,7 @@ class StructuredIntentResolver:
             confirmation_state=ConfirmationState.PENDING,
             authorization_level=authorization_level,
             resolution_mode=self.resolution_mode(authorization_level),
-            created_at=created_at or datetime.utcnow(),
+            created_at=created_at or utcnow(),
         )
 
     def confirm(self, declaration: IntentDeclaration) -> IntentDeclaration:
@@ -223,7 +224,7 @@ class StructuredIntentResolver:
             field=field,
             original=original_value,
             corrected=corrected_value,
-            corrected_at=at or datetime.utcnow(),
+            corrected_at=at or utcnow(),
         )
         return declaration.model_copy(
             update={
@@ -277,7 +278,7 @@ class StructuredIntentResolver:
                 f"Standing declaration '{standing.standing_id}' must be authored by a "
                 f"human authority, not the governed system."
             )
-        when = now or datetime.utcnow()
+        when = now or utcnow()
         if when >= standing.expires_at:
             raise StandingIntentError(
                 f"Standing declaration '{standing.standing_id}' expired at "

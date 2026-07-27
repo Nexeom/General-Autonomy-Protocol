@@ -11,6 +11,7 @@ from enum import Enum
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
+from gap_kernel._time import utcnow
 
 
 class EscalationTriggerType(str, Enum):
@@ -26,7 +27,7 @@ class EscalationTrigger(BaseModel):
     trigger_type: EscalationTriggerType
     description: str
     evidence: dict = Field(default_factory=dict)
-    detected_at: datetime = Field(default_factory=datetime.utcnow)
+    detected_at: datetime = Field(default_factory=utcnow)
     original_level: str  # e.g., "L0", "L1"
     escalated_level: str  # e.g., "L2", "L3"
     confidence: float = Field(ge=0.0, le=1.0)
@@ -89,7 +90,7 @@ class DynamicRiskEngine:
         self._action_history.append({
             "action_type": action_type,
             "context": action_context,
-            "timestamp": datetime.utcnow(),
+            "timestamp": utcnow(),
         })
 
     def _check_volume_anomaly(
@@ -105,7 +106,7 @@ class DynamicRiskEngine:
         recent_count = sum(
             1 for a in self._action_history
             if a["action_type"] == action_type
-            and (datetime.utcnow() - a["timestamp"]).total_seconds()
+            and (utcnow() - a["timestamp"]).total_seconds()
             < self.config.cascade_window_seconds
         )
 
@@ -166,7 +167,7 @@ class DynamicRiskEngine:
         self, action_type: str, context: dict
     ) -> Optional[EscalationTrigger]:
         """Detect if sequence of low-risk actions constitutes high-risk operation."""
-        now = datetime.utcnow()
+        now = utcnow()
         recent_actions = [
             a for a in self._action_history
             if (now - a["timestamp"]).total_seconds()

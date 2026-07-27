@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from typing import Callable, Dict, List, Optional
 from uuid import uuid4
 
+from gap_kernel._time import ensure_utc, utcnow
 from gap_kernel.execution.fabric import ExecutionFabric
 from gap_kernel.governance.corrigibility import KillSwitch
 from gap_kernel.governance.integrity_monitor import GovernanceIntegrityMonitor
@@ -49,7 +50,7 @@ class DriftEvent:
         self.description = description
         self.severity = severity
         self.sla_remaining_minutes = sla_remaining_minutes
-        self.detected_at = datetime.utcnow()
+        self.detected_at = utcnow()
 
     def to_dict(self) -> dict:
         return {
@@ -84,7 +85,7 @@ class DriftWatcher:
     ) -> List[DriftEvent]:
         """Run all drift detection rules against an entity."""
         if current_time is None:
-            current_time = datetime.utcnow()
+            current_time = utcnow()
 
         events = []
         for rule in self._rules:
@@ -131,7 +132,11 @@ class DriftWatcher:
                     created = datetime.fromisoformat(created_str)
                 else:
                     created = created_str
-            except (ValueError, TypeError):
+                # Entity timestamps arrive from outside GAP and may be naive or
+                # aware; subtracting a naive from an aware datetime raises, so
+                # normalize before any arithmetic.
+                created = ensure_utc(created)
+            except (ValueError, TypeError, AttributeError):
                 continue
 
             minutes_waiting = (current_time - created).total_seconds() / 60.0
@@ -275,7 +280,7 @@ class ReconcilerLoop:
         Returns a list of results (one per drift event processed).
         """
         if current_time is None:
-            current_time = datetime.utcnow()
+            current_time = utcnow()
 
         results = []
         intents = list(self._intents.values())
@@ -484,7 +489,7 @@ class ReconcilerLoop:
                 esc["status"] = "resolved"
                 esc["resolution"] = resolution
                 esc["resolved_by"] = resolver
-                esc["resolved_at"] = datetime.utcnow().isoformat()
+                esc["resolved_at"] = utcnow().isoformat()
                 esc["chosen_option_id"] = chosen_option_id
                 self._feed_framing_telemetry(esc, chosen_option_id)
                 return esc

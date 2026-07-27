@@ -35,6 +35,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel
+from gap_kernel._time import utcnow
 
 _RANK = {"L0": 0, "L1": 1, "L2": 2, "L3": 3, "L4": 4}
 _MAX_RANK = 4  # L4; used to normalize authorization-rank metrics to [0, 1]
@@ -151,7 +152,7 @@ class GovernanceIntegrityMonitor:
             action_type=action_type,
             rank=_RANK[authorization_level],
             target=target,
-            at=timestamp or datetime.utcnow(),
+            at=timestamp or utcnow(),
         )
         # Cap each per-key list by COUNT (not time): memory stays bounded on a
         # long-running monitor, while recency/aging is handled in the detectors

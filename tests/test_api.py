@@ -1,10 +1,11 @@
 """Tests for the FastAPI API endpoints."""
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
+from gap_kernel._time import utcnow
 from gap_kernel.api.app import create_app
 from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.learning.engine import LearningEngine
@@ -228,7 +229,7 @@ class TestFullAPIScenario:
         assert cost_response.status_code == 200
 
         # 2. Simulate lead state — ingest EU lead that's been waiting
-        created_at = (datetime.utcnow() - timedelta(minutes=8)).isoformat()
+        created_at = (utcnow() - timedelta(minutes=8)).isoformat()
         ingest_response = client.post("/world/ingest", json={
             "entity_type": "lead",
             "entity_id": "lead_4821",

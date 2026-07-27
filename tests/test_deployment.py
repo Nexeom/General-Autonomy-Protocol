@@ -10,6 +10,7 @@ from datetime import datetime
 
 import pytest
 
+from gap_kernel._time import utcnow
 from gap_kernel.crypto.signing import PublicKeyRegistry, generate_keypair
 from gap_kernel.errors import GovernanceConfigError
 from gap_kernel.governance.deployment import build_governed_deployment
@@ -34,17 +35,17 @@ class _Gen:
             id=f"prop_{attempt_number}", intent_id=intent.id, attempt_number=attempt_number,
             plan_description="op",
             actions=[PlannedAction(action_type="query_crm", target="t1", parameters={}, risk_score=self.risk)],
-            estimated_cost=0.01, rationale="r", generated_at=datetime.utcnow(),
+            estimated_cost=0.01, rationale="r", generated_at=utcnow(),
         )
 
 
 def _intent():
     return IntentVector(id="i1", objective="o", priority=50, hard_constraints=[],
-                        soft_constraints=[], created_by="t", created_at=datetime.utcnow())
+                        soft_constraints=[], created_by="t", created_at=utcnow())
 
 
 def _world():
-    return WorldModel(entities={}, last_reconciled=datetime.utcnow())
+    return WorldModel(entities={}, last_reconciled=utcnow())
 
 
 def _signed_profile():

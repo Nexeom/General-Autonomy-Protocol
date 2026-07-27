@@ -6,8 +6,8 @@ the system is engineered to "find a path to yes", it must be impossible to
 compliant plan exists it must escalate, never execute.
 """
 
-from datetime import datetime
 
+from gap_kernel._time import utcnow
 from gap_kernel.execution.fabric import ExecutionFabric
 from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.models.governance import GovernanceVerdict
@@ -33,7 +33,7 @@ class _PersistentlyViolatingGenerator:
             ],
             estimated_cost=0.01,
             rationale="just send it",
-            generated_at=datetime.utcnow(),
+            generated_at=utcnow(),
         )
 
 
@@ -51,7 +51,7 @@ def test_cga_cannot_negotiate_around_hard_constraint():
         ],
         soft_constraints=[],
         created_by="t",
-        created_at=datetime.utcnow(),
+        created_at=utcnow(),
     )
     world = WorldModel(
         entities={
@@ -59,11 +59,11 @@ def test_cga_cannot_negotiate_around_hard_constraint():
                 entity_type="lead",
                 entity_id="eu_lead",
                 properties={"geo": "EU", "gdpr_consent": False},
-                last_updated=datetime.utcnow(),
+                last_updated=utcnow(),
                 source="t",
             )
         },
-        last_reconciled=datetime.utcnow(),
+        last_reconciled=utcnow(),
     )
     loop = CGALoop(
         GovernanceKernel(),

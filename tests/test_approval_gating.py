@@ -5,10 +5,11 @@ It surfaces them as ``awaiting_approval``; an operator obtains a human Out-of-Ba
 approval signature off-channel and calls ``approve_and_execute`` to dispatch.
 """
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 
+from gap_kernel._time import utcnow
 from gap_kernel.crypto.signing import PublicKeyRegistry, generate_keypair, sign
 from gap_kernel.execution.fabric import ExecutionFabric, OOBVerificationError
 from gap_kernel.governance.kernel import GovernanceKernel
@@ -35,19 +36,19 @@ class _FixedRiskGenerator:
             ],
             estimated_cost=0.01,
             rationale="r",
-            generated_at=datetime.utcnow(),
+            generated_at=utcnow(),
         )
 
 
 def _intent():
     return IntentVector(
         id="i1", objective="o", priority=50, hard_constraints=[], soft_constraints=[],
-        created_by="t", created_at=datetime.utcnow(),
+        created_by="t", created_at=utcnow(),
     )
 
 
 def _world():
-    return WorldModel(entities={}, last_reconciled=datetime.utcnow())
+    return WorldModel(entities={}, last_reconciled=utcnow())
 
 
 def test_l0_approval_executes_autonomously():
@@ -85,7 +86,7 @@ def _l2_loop_with_approver():
 def test_approve_and_execute_completes_l2_with_valid_signature():
     loop, result, approver_priv = _l2_loop_with_approver()
     decision = result.decisions[-1]
-    valid_until = datetime.utcnow() + timedelta(minutes=5)
+    valid_until = utcnow() + timedelta(minutes=5)
     # Sign the fabric's canonical OOB message (binds decision/proposal/level/approver/expiry).
     decision.human_approver_public_key_id = "alice"
     decision.human_approval_valid_until = valid_until
@@ -104,7 +105,7 @@ def test_approve_and_execute_completes_l2_with_valid_signature():
 def test_approve_and_execute_rejects_invalid_signature():
     loop, result, _ = _l2_loop_with_approver()
     decision = result.decisions[-1]
-    valid_until = datetime.utcnow() + timedelta(minutes=5)
+    valid_until = utcnow() + timedelta(minutes=5)
     with pytest.raises(OOBVerificationError):
         loop.approve_and_execute(
             result.approved_proposal,

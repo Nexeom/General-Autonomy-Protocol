@@ -1,8 +1,8 @@
 """Tests for the Governance Kernel."""
 
-from datetime import datetime
 
 
+from gap_kernel._time import utcnow
 from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.models.governance import GovernanceVerdict
 from gap_kernel.models.intent import (
@@ -29,12 +29,12 @@ def _make_eu_lead_world(entity_id: str = "lead_4821", consent: bool = False) -> 
                     "gdpr_consent": consent,
                     "local_hour": 14,
                 },
-                last_updated=datetime.utcnow(),
+                last_updated=utcnow(),
                 source="crm",
                 obligations=["lead_response_sla"],
             )
         },
-        last_reconciled=datetime.utcnow(),
+        last_reconciled=utcnow(),
     )
 
 
@@ -68,7 +68,7 @@ def _make_sla_intent() -> IntentVector:
             ),
         ],
         created_by="test",
-        created_at=datetime.utcnow(),
+        created_at=utcnow(),
     )
 
 
@@ -85,7 +85,7 @@ class TestGovernanceKernel:
             hard_constraints=[],
             soft_constraints=[],
             created_by="test",
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
         )
         proposal = StrategyProposal(
             id="prop_1",
@@ -102,9 +102,9 @@ class TestGovernanceKernel:
             ],
             estimated_cost=0.05,
             rationale="Low-risk query",
-            generated_at=datetime.utcnow(),
+            generated_at=utcnow(),
         )
-        world = WorldModel(entities={}, last_reconciled=datetime.utcnow())
+        world = WorldModel(entities={}, last_reconciled=utcnow())
 
         decision = self.kernel.evaluate_proposal(
             proposal=proposal,
@@ -134,7 +134,7 @@ class TestGovernanceKernel:
             ],
             estimated_cost=0.10,
             rationale="Direct approach",
-            generated_at=datetime.utcnow(),
+            generated_at=utcnow(),
         )
 
         decision = self.kernel.evaluate_proposal(
@@ -167,7 +167,7 @@ class TestGovernanceKernel:
             ],
             estimated_cost=0.10,
             rationale="Consent verified",
-            generated_at=datetime.utcnow(),
+            generated_at=utcnow(),
         )
 
         decision = self.kernel.evaluate_proposal(
@@ -200,7 +200,7 @@ class TestGovernanceKernel:
             ],
             estimated_cost=5.00,
             rationale="Compliant human handoff",
-            generated_at=datetime.utcnow(),
+            generated_at=utcnow(),
         )
 
         decision = self.kernel.evaluate_proposal(
@@ -220,7 +220,7 @@ class TestGovernanceKernel:
             hard_constraints=[],
             soft_constraints=[],
             created_by="test",
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
         )
         proposal = StrategyProposal(
             id="prop_risky",
@@ -238,9 +238,9 @@ class TestGovernanceKernel:
             ],
             estimated_cost=0.0,
             rationale="Extreme action",
-            generated_at=datetime.utcnow(),
+            generated_at=utcnow(),
         )
-        world = WorldModel(entities={}, last_reconciled=datetime.utcnow())
+        world = WorldModel(entities={}, last_reconciled=utcnow())
 
         decision = self.kernel.evaluate_proposal(
             proposal=proposal, intents=[intent], world_state=world,
@@ -256,9 +256,9 @@ class TestGovernanceKernel:
             hard_constraints=[],
             soft_constraints=[],
             created_by="test",
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
         )
-        world = WorldModel(entities={}, last_reconciled=datetime.utcnow())
+        world = WorldModel(entities={}, last_reconciled=utcnow())
 
         for risk, expected_tier in [
             (1, "auto_execute"),
@@ -283,7 +283,7 @@ class TestGovernanceKernel:
                 ],
                 estimated_cost=0.0,
                 rationale="Test",
-                generated_at=datetime.utcnow(),
+                generated_at=utcnow(),
             )
             decision = self.kernel.evaluate_proposal(
                 proposal=proposal, intents=[intent], world_state=world,
@@ -312,7 +312,7 @@ class TestGovernanceKernel:
             ],
             estimated_cost=0.10,
             rationale="Test",
-            generated_at=datetime.utcnow(),
+            generated_at=utcnow(),
         )
 
         decision = self.kernel.evaluate_proposal(
@@ -344,7 +344,7 @@ class TestGovernanceKernel:
             ],
             estimated_cost=5.0,
             rationale="Test",
-            generated_at=datetime.utcnow(),
+            generated_at=utcnow(),
         )
 
         decision = self.kernel.evaluate_proposal(

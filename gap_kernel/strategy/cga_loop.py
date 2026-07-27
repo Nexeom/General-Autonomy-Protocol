@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import Callable, List, Optional, Protocol
 from uuid import uuid4
 
+from gap_kernel._time import utcnow
 from gap_kernel.errors import GovernanceConfigError
 from gap_kernel.execution.fabric import _OOB_REQUIRED_LEVELS, ExecutionFabric
 from gap_kernel.governance.action_classifier import ActionTypeClassifier
@@ -110,7 +111,7 @@ class RuleBasedStrategyGenerator:
             prior_rejection_id=(
                 prior_proposals[-1].id if prior_proposals else None
             ),
-            generated_at=datetime.utcnow(),
+            generated_at=utcnow(),
         )
         return proposal
 
@@ -545,7 +546,7 @@ class CGALoop:
         decision.human_approval_signature = human_approval_signature
         decision.human_approver_public_key_id = approver_key_id
         decision.human_approval_valid_until = valid_until
-        decision.human_approval_timestamp = timestamp or datetime.utcnow()
+        decision.human_approval_timestamp = timestamp or utcnow()
         result = self.execution.execute(proposal, decision)
         # SA-4: an L2+ self-modification is realized here (when the human OOB
         # signature actually dispatches it), so it counts toward capability gain
@@ -625,7 +626,7 @@ class CGAResult:
         world_state_snapshot: dict,
     ) -> LineageRecord:
         """Build a complete lineage record from the CGA loop result."""
-        now = datetime.utcnow()
+        now = utcnow()
 
         # Detect conflict resolution info
         deprioritized = None

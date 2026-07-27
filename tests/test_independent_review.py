@@ -6,8 +6,8 @@ under-classifying an operation (assigning too little oversight) the way the base
 GIM detectors (which watch only the system's own stream) cannot.
 """
 
-from datetime import datetime
 
+from gap_kernel._time import utcnow
 from gap_kernel.governance.independent_review import (
     IndependentAuthorizationMonitor,
     RuleBasedIndependentClassifier,
@@ -98,11 +98,11 @@ def test_observe_decision_convenience():
         id="p1", intent_id="i1", attempt_number=1, plan_description="x",
         actions=[PlannedAction(action_type="wipe_database", target="db",
                                parameters={}, risk_score=10)],
-        estimated_cost=0.0, rationale="r", generated_at=datetime.utcnow(),
+        estimated_cost=0.0, rationale="r", generated_at=utcnow(),
     )
     decision = GovernanceDecision(
         id="d1", proposal_id="p1", verdict=GovernanceVerdict.APPROVED,
-        authorization_tier="auto", authorization_level=AL.L0, evaluated_at=datetime.utcnow(),
+        authorization_tier="auto", authorization_level=AL.L0, evaluated_at=utcnow(),
     )
     mon.observe_decision(decision, proposal)
     signal = mon.check_divergence()

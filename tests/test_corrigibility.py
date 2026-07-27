@@ -9,6 +9,7 @@ from datetime import datetime
 
 import pytest
 
+from gap_kernel._time import utcnow
 from gap_kernel.execution.fabric import (
     ExecutionError,
     ExecutionFabric,
@@ -30,11 +31,11 @@ def _world():
         entities={
             "lead_123": EntityState(
                 entity_type="lead", entity_id="lead_123",
-                properties={"name": "Test Lead"}, last_updated=datetime.utcnow(),
+                properties={"name": "Test Lead"}, last_updated=utcnow(),
                 source="test",
             )
         },
-        last_reconciled=datetime.utcnow(),
+        last_reconciled=utcnow(),
     )
 
 
@@ -43,20 +44,20 @@ def _proposal(pid="prop_1", target="lead_123"):
         id=pid, intent_id="intent_1", attempt_number=1, plan_description="Send email",
         actions=[PlannedAction(action_type="send_email", target=target,
                                parameters={"template": "response"}, risk_score=3)],
-        estimated_cost=0.10, rationale="Direct approach", generated_at=datetime.utcnow(),
+        estimated_cost=0.10, rationale="Direct approach", generated_at=utcnow(),
     )
 
 
 def _approved(pid="prop_1"):
     return GovernanceDecision(
         id="dec_1", proposal_id=pid, verdict=GovernanceVerdict.APPROVED,
-        authorization_tier="auto_execute", evaluated_at=datetime.utcnow(),
+        authorization_tier="auto_execute", evaluated_at=utcnow(),
     )
 
 
 def _intent():
     return IntentVector(id="i1", objective="o", priority=50, hard_constraints=[],
-                        soft_constraints=[], created_by="t", created_at=datetime.utcnow())
+                        soft_constraints=[], created_by="t", created_at=utcnow())
 
 
 class _CountingGen:
@@ -74,7 +75,7 @@ class _CountingGen:
             plan_description="op",
             actions=[PlannedAction(action_type="query_crm", target=self.target,
                                    parameters={}, risk_score=1)],
-            estimated_cost=0.01, rationale="r", generated_at=datetime.utcnow(),
+            estimated_cost=0.01, rationale="r", generated_at=utcnow(),
         )
 
 
@@ -145,7 +146,7 @@ def test_fabric_halts_only_targeted_scope():
     # An action targeting a different scope is unaffected.
     world = _world()
     world.entities["other"] = EntityState(
-        entity_type="lead", entity_id="other", properties={}, last_updated=datetime.utcnow(),
+        entity_type="lead", entity_id="other", properties={}, last_updated=utcnow(),
         source="test")
     fabric2 = ExecutionFabric(world, allow_unsigned_decisions=True, kill_switch=ks)
     result = fabric2.execute(_proposal(pid="p2", target="other"), _approved("p2"))
@@ -342,15 +343,15 @@ def _drifting_reconciler():
         priority=80,
         hard_constraints=[Constraint(name="gdpr_consent_required", type=ConstraintType.HARD,
                                      description="Verify GDPR consent before EU outreach")],
-        soft_constraints=[], created_by="test", created_at=datetime.utcnow(),
+        soft_constraints=[], created_by="test", created_at=utcnow(),
     )
     reconciler.register_intent(intent)
     world_store.upsert_entity(EntityState(
         entity_type="lead", entity_id="lead_4821",
         properties={"name": "EU Lead", "value": 50000, "geo": "US", "gdpr_consent": True,
                     "local_hour": 14,
-                    "created_at": (datetime.utcnow() - timedelta(minutes=8)).isoformat()},
-        last_updated=datetime.utcnow(), source="crm", obligations=["lead_response_sla"],
+                    "created_at": (utcnow() - timedelta(minutes=8)).isoformat()},
+        last_updated=utcnow(), source="crm", obligations=["lead_response_sla"],
     ))
     return reconciler, world_store
 

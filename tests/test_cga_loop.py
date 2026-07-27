@@ -1,8 +1,8 @@
 """Tests for the CGA Loop — the defining behavior of GAP."""
 
-from datetime import datetime
 
 
+from gap_kernel._time import utcnow
 from gap_kernel.execution.fabric import ExecutionFabric
 from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.models.governance import GovernanceVerdict
@@ -28,15 +28,15 @@ def _make_eu_lead_world(consent: bool = False) -> WorldModel:
                     "gdpr_consent": consent,
                     "local_hour": 14,
                     "created_at": (
-                        datetime.utcnow().replace(microsecond=0).isoformat()
+                        utcnow().replace(microsecond=0).isoformat()
                     ),
                 },
-                last_updated=datetime.utcnow(),
+                last_updated=utcnow(),
                 source="crm",
                 obligations=["lead_response_sla"],
             )
         },
-        last_reconciled=datetime.utcnow(),
+        last_reconciled=utcnow(),
     )
 
 
@@ -60,7 +60,7 @@ def _make_sla_intent() -> IntentVector:
             ),
         ],
         created_by="test",
-        created_at=datetime.utcnow(),
+        created_at=utcnow(),
     )
 
 
@@ -78,7 +78,7 @@ def _make_cost_intent() -> IntentVector:
             ),
         ],
         created_by="test",
-        created_at=datetime.utcnow(),
+        created_at=utcnow(),
     )
 
 
@@ -178,12 +178,12 @@ class TestCGALoop:
                         "gdpr_consent": False,
                         "local_hour": 23,  # Outside hours too
                     },
-                    last_updated=datetime.utcnow(),
+                    last_updated=utcnow(),
                     source="test",
                     obligations=["lead_response_sla"],
                 )
             },
-            last_reconciled=datetime.utcnow(),
+            last_reconciled=utcnow(),
         )
 
         # Intent with both GDPR and hours constraints active
@@ -205,7 +205,7 @@ class TestCGALoop:
             ],
             soft_constraints=[],
             created_by="test",
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
         )
 
         governance = GovernanceKernel()

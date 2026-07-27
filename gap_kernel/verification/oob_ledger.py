@@ -9,7 +9,7 @@ when the ledger is backed by a file rather than ``:memory:``.
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from gap_kernel._time import utcnow
 
 
 class ReplayError(Exception):
@@ -59,7 +59,7 @@ class OOBLedger:
                 "INSERT INTO oob_authorizations "
                 "(decision_id, signature, approver_key_id, used_at) "
                 "VALUES (?, ?, ?, ?)",
-                (decision_id, signature, approver_key_id, datetime.utcnow().isoformat()),
+                (decision_id, signature, approver_key_id, utcnow().isoformat()),
             )
             self._conn.commit()
         except sqlite3.IntegrityError:

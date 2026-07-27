@@ -22,6 +22,7 @@ from uuid import uuid4
 
 from croniter import croniter
 
+from gap_kernel._time import utcnow
 from gap_kernel.crypto.signing import PublicKeyRegistry, generate_keypair, sign
 from gap_kernel.errors import GovernanceConfigError
 from gap_kernel.governance.dynamic_risk import (
@@ -579,7 +580,7 @@ def _detect_intent_conflicts(
 
         for constraint in intent.hard_constraints:
             if _check_constraint_violation(proposal, constraint, WorldModel(
-                entities={}, last_reconciled=datetime.utcnow()
+                entities={}, last_reconciled=utcnow()
             )):
                 conflicting.append(intent)
                 break
@@ -719,7 +720,7 @@ class GovernanceKernel:
         human authorization — autonomous systems cannot register new types.
         """
         spec.registered_by = registered_by
-        spec.registered_at = datetime.utcnow()
+        spec.registered_at = utcnow()
         self._action_type_registry[spec.type_id] = spec
         return spec
 
@@ -745,7 +746,7 @@ class GovernanceKernel:
         one phase does not automatically satisfy subsequent phases.
         """
         if current_time is None:
-            current_time = datetime.utcnow()
+            current_time = utcnow()
 
         active_constraints = self._get_active_constraints(intents, current_time)
 
@@ -862,7 +863,7 @@ class GovernanceKernel:
         Includes Structured Uncertainty declaration on every decision.
         """
         if current_time is None:
-            current_time = datetime.utcnow()
+            current_time = utcnow()
 
         decision_id = f"gov_{uuid4().hex[:12]}"
 

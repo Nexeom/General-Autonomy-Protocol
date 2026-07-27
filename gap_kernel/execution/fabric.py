@@ -13,9 +13,9 @@ Behavioral Contract:
 
 import json
 import time
-from datetime import datetime
 from typing import Callable, Dict, Optional
 
+from gap_kernel._time import utcnow
 from gap_kernel.crypto.signing import PublicKeyRegistry, verify as verify_signature
 from gap_kernel.governance.corrigibility import KillSwitch
 from gap_kernel.models.execution import ExecutionResult
@@ -213,7 +213,7 @@ class ExecutionFabric:
             actions_failed=failed,
             success=success,
             world_state_changes=state_changes,
-            executed_at=datetime.utcnow(),
+            executed_at=utcnow(),
             execution_duration_seconds=round(elapsed, 3),
         )
 
@@ -329,7 +329,7 @@ class ExecutionFabric:
             )
 
         # 2. Freshness — the approval must not be expired.
-        if datetime.utcnow() > decision.human_approval_valid_until:
+        if utcnow() > decision.human_approval_valid_until:
             raise OOBVerificationError(
                 f"Decision {decision.id} OOB approval expired at "
                 f"{decision.human_approval_valid_until.isoformat()}."
@@ -428,9 +428,9 @@ class ExecutionFabric:
         if entity:
             # Mark entity as contacted / updated
             if action.action_type in ("send_email", "route_to_human", "automated_outreach"):
-                entity.properties["last_contacted"] = datetime.utcnow().isoformat()
+                entity.properties["last_contacted"] = utcnow().isoformat()
                 entity.properties["contact_method"] = action.action_type
-                entity.last_updated = datetime.utcnow()
+                entity.last_updated = utcnow()
                 changes.append({
                     "entity_id": target_id,
                     "field": "last_contacted",
@@ -474,6 +474,6 @@ class ExecutionFabric:
         if entity:
             updates = action.parameters.get("updates", {})
             entity.properties.update(updates)
-            entity.last_updated = datetime.utcnow()
+            entity.last_updated = utcnow()
             return {"status": "updated", "fields": list(updates.keys())}
         return {"status": "not_found"}

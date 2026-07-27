@@ -1,9 +1,9 @@
 """Tests for core data models."""
 
-from datetime import datetime
 
 import pytest
 
+from gap_kernel._time import utcnow
 from gap_kernel.models import (
     Constraint,
     ConstraintType,
@@ -41,7 +41,7 @@ class TestIntentVector:
                 )
             ],
             created_by="test_user",
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
         )
         assert intent.id == "test_intent_1"
         assert intent.priority == 80
@@ -58,7 +58,7 @@ class TestIntentVector:
                 hard_constraints=[],
                 soft_constraints=[],
                 created_by="test",
-                created_at=datetime.utcnow(),
+                created_at=utcnow(),
             )
 
         with pytest.raises(Exception):
@@ -69,7 +69,7 @@ class TestIntentVector:
                 hard_constraints=[],
                 soft_constraints=[],
                 created_by="test",
-                created_at=datetime.utcnow(),
+                created_at=utcnow(),
             )
 
     def test_temporal_activation(self):
@@ -98,7 +98,7 @@ class TestStrategyProposal:
             ],
             estimated_cost=0.10,
             rationale="Direct approach",
-            generated_at=datetime.utcnow(),
+            generated_at=utcnow(),
         )
         assert proposal.attempt_number == 1
         assert len(proposal.actions) == 1
@@ -128,7 +128,7 @@ class TestGovernanceDecision:
             proposal_id="prop_1",
             verdict=GovernanceVerdict.APPROVED,
             authorization_tier="auto_execute",
-            evaluated_at=datetime.utcnow(),
+            evaluated_at=utcnow(),
         )
         assert decision.verdict == GovernanceVerdict.APPROVED
         assert decision.evaluator == "governance_kernel"
@@ -141,7 +141,7 @@ class TestGovernanceDecision:
             violated_constraints=["gdpr_consent_required"],
             rejection_reason="gdpr_consent_required",
             rejection_detail="No consent on file",
-            evaluated_at=datetime.utcnow(),
+            evaluated_at=utcnow(),
         )
         assert decision.verdict == GovernanceVerdict.REJECTED
         assert len(decision.violated_constraints) == 1
@@ -153,7 +153,7 @@ class TestWorldModel:
             entity_type="lead",
             entity_id="lead_123",
             properties={"name": "Test Lead", "value": 50000},
-            last_updated=datetime.utcnow(),
+            last_updated=utcnow(),
             source="crm",
             obligations=["intent_1"],
         )
@@ -165,19 +165,19 @@ class TestWorldModel:
             entity_type="lead",
             entity_id="lead_123",
             properties={},
-            last_updated=datetime.utcnow(),
+            last_updated=utcnow(),
             source="test",
         )
         model = WorldModel(
             entities={"lead_123": entity},
-            last_reconciled=datetime.utcnow(),
+            last_reconciled=utcnow(),
         )
         assert "lead_123" in model.entities
 
 
 class TestLineageRecord:
     def test_create_lineage_record(self):
-        now = datetime.utcnow()
+        now = utcnow()
         intent = IntentVector(
             id="intent_1",
             objective="Test",

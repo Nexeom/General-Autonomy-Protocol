@@ -5,10 +5,10 @@ a sub-agent cannot dispatch above its ceiling, a halted sub-agent (or any ancest
 cannot dispatch, and realized actions feed cross-agent decomposition detection.
 """
 
-from datetime import datetime
 
 import pytest
 
+from gap_kernel._time import utcnow
 from gap_kernel.execution.fabric import ExecutionFabric, KillSwitchEngaged
 from gap_kernel.execution.sub_agent_executor import SubAgentExecutor
 from gap_kernel.governance.corrigibility import KillSwitch
@@ -22,9 +22,9 @@ from gap_kernel.models.world import EntityState, WorldModel
 def _world():
     return WorldModel(
         entities={"acct_9": EntityState(entity_type="acct", entity_id="acct_9",
-                                        properties={}, last_updated=datetime.utcnow(),
+                                        properties={}, last_updated=utcnow(),
                                         source="t")},
-        last_reconciled=datetime.utcnow(),
+        last_reconciled=utcnow(),
     )
 
 
@@ -32,7 +32,7 @@ def _proposal(pid="p1", target="acct_9"):
     return StrategyProposal(
         id=pid, intent_id="i1", attempt_number=1, plan_description="x",
         actions=[PlannedAction(action_type="query_crm", target=target, parameters={}, risk_score=1)],
-        estimated_cost=0.01, rationale="r", generated_at=datetime.utcnow(),
+        estimated_cost=0.01, rationale="r", generated_at=utcnow(),
     )
 
 
@@ -40,7 +40,7 @@ def _decision(level, pid="p1"):
     return GovernanceDecision(
         id="d1", proposal_id=pid, verdict=GovernanceVerdict.APPROVED,
         authorization_tier="auto_execute", authorization_level=level,
-        evaluated_at=datetime.utcnow(),
+        evaluated_at=utcnow(),
     )
 
 
@@ -113,7 +113,7 @@ def test_failed_dispatch_is_not_recorded():
         id="p1", intent_id="i1", attempt_number=1, plan_description="x",
         actions=[PlannedAction(action_type="launch_missiles", target="acct_9",
                                parameters={}, risk_score=1)],
-        estimated_cost=0.0, rationale="r", generated_at=datetime.utcnow(),
+        estimated_cost=0.0, rationale="r", generated_at=utcnow(),
     )
     result = _exec(reg).execute("a1", bad, _decision(AL.L1))
     assert result.success is False
@@ -138,7 +138,7 @@ def test_partial_success_records_only_realized_actions():
                 PlannedAction(action_type="query_crm", target="acct_9", parameters={}, risk_score=1),
                 PlannedAction(action_type="decoy_unregistered", target="acct_9", parameters={}, risk_score=1),
             ],
-            estimated_cost=0.0, rationale="r", generated_at=datetime.utcnow(),
+            estimated_cost=0.0, rationale="r", generated_at=utcnow(),
         )
 
     for agent, pid in (("a1", "p1"), ("a2", "p2"), ("a1", "p3")):

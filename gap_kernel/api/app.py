@@ -12,13 +12,13 @@ Exposes the kernel's functionality via a REST API for:
 """
 
 import logging
-from datetime import datetime
 from typing import List, Optional
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from gap_kernel._time import utcnow
 from gap_kernel.crypto.signing import PublicKeyRegistry
 from gap_kernel.client.governance_client import SubprocessGovernanceClient
 from gap_kernel.execution.fabric import ExecutionFabric
@@ -236,7 +236,7 @@ def create_app(
             soft_constraints=soft,
             cost_ceiling=req.cost_ceiling,
             created_by=req.created_by,
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
         )
 
         reconciler.register_intent(intent)
@@ -328,7 +328,7 @@ def create_app(
             entity_type=req.entity_type,
             entity_id=req.entity_id,
             properties=req.properties,
-            last_updated=datetime.utcnow(),
+            last_updated=utcnow(),
             source=req.source,
             confidence=req.confidence,
             obligations=req.obligations,

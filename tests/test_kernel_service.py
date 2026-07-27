@@ -9,6 +9,7 @@ from datetime import datetime
 
 import pytest
 
+from gap_kernel._time import utcnow
 from gap_kernel.client.governance_client import (
     GovernanceClientError,
     InProcessGovernanceClient,
@@ -31,17 +32,17 @@ def _proposal(pid="prop_s"):
     return StrategyProposal(
         id=pid, intent_id="i1", attempt_number=1, plan_description="p",
         actions=[PlannedAction(action_type="query_crm", target="t1", parameters={}, risk_score=1)],
-        estimated_cost=0.01, rationale="r", generated_at=datetime.utcnow(),
+        estimated_cost=0.01, rationale="r", generated_at=utcnow(),
     )
 
 
 def _intent():
     return IntentVector(id="i1", objective="o", priority=50, hard_constraints=[],
-                        soft_constraints=[], created_by="t", created_at=datetime.utcnow())
+                        soft_constraints=[], created_by="t", created_at=utcnow())
 
 
 def _world():
-    return WorldModel(entities={}, last_reconciled=datetime.utcnow())
+    return WorldModel(entities={}, last_reconciled=utcnow())
 
 
 # --- service ----------------------------------------------------------------

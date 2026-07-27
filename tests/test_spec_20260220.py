@@ -10,10 +10,10 @@ Tests for GAP spec additions dated 2026-02-20:
 """
 
 import hashlib
-from datetime import datetime
 
 import pytest
 
+from gap_kernel._time import utcnow
 from gap_kernel.execution.fabric import ExecutionFabric
 from gap_kernel.governance.kernel import (
     GovernanceKernel,
@@ -58,7 +58,7 @@ def _make_intent(intent_id="intent_test", with_gdpr=True):
         hard_constraints=hard,
         soft_constraints=[],
         created_by="test",
-        created_at=datetime.utcnow(),
+        created_at=utcnow(),
     )
 
 
@@ -76,7 +76,7 @@ def _make_proposal(intent_id="intent_test", action_type="send_email", risk=3, ta
         )],
         estimated_cost=0.10,
         rationale="Test",
-        generated_at=datetime.utcnow(),
+        generated_at=utcnow(),
     )
 
 
@@ -89,14 +89,14 @@ def _make_world_state(entity_id="lead_001", geo="EU", consent=False, confidence=
                 properties={
                     "geo": geo,
                     "gdpr_consent": consent,
-                    "created_at": datetime.utcnow().isoformat(),
+                    "created_at": utcnow().isoformat(),
                 },
-                last_updated=datetime.utcnow(),
+                last_updated=utcnow(),
                 source="test",
                 confidence=confidence,
             ),
         },
-        last_reconciled=datetime.utcnow(),
+        last_reconciled=utcnow(),
     )
 
 
@@ -390,7 +390,7 @@ class TestStructuredUncertainty:
         kernel = GovernanceKernel()
         proposal = _make_proposal(target="nonexistent_entity", action_type="route_to_human", risk=2)
         intent = _make_intent(with_gdpr=False)
-        world = WorldModel(entities={}, last_reconciled=datetime.utcnow())
+        world = WorldModel(entities={}, last_reconciled=utcnow())
 
         decision = kernel.evaluate_proposal(
             proposal=proposal,
@@ -404,7 +404,7 @@ class TestStructuredUncertainty:
         """Uncertainty flows from governance decision into lineage record."""
         kernel = GovernanceKernel()
         fabric = ExecutionFabric(
-            WorldModel(entities={}, last_reconciled=datetime.utcnow()),
+            WorldModel(entities={}, last_reconciled=utcnow()),
             kernel_public_key_hex=kernel.public_key_hex,
         )
         cga = CGALoop(

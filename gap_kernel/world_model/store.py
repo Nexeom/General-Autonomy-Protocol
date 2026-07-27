@@ -5,9 +5,9 @@ Updated by: Execution outcomes + External sensors
 Queried by: Reconciler Loop + Strategy Layer
 """
 
-from datetime import datetime
 from typing import List, Optional
 
+from gap_kernel._time import utcnow
 from gap_kernel.models.world import EntityState, WorldModel
 
 
@@ -20,7 +20,7 @@ class WorldModelStore:
     def __init__(self):
         self._model = WorldModel(
             entities={},
-            last_reconciled=datetime.utcnow(),
+            last_reconciled=utcnow(),
         )
 
     @property
@@ -67,7 +67,7 @@ class WorldModelStore:
 
     def mark_reconciled(self) -> None:
         """Mark the world model as reconciled at the current time."""
-        self._model.last_reconciled = datetime.utcnow()
+        self._model.last_reconciled = utcnow()
 
     def get_state_snapshot(self) -> dict:
         """Get a serializable snapshot of the current world state."""
@@ -78,4 +78,4 @@ class WorldModelStore:
         entity = self._model.entities.get(entity_id)
         if entity:
             entity.properties.update(updates)
-            entity.last_updated = datetime.utcnow()
+            entity.last_updated = utcnow()
