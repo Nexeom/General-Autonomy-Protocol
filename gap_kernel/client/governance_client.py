@@ -31,7 +31,11 @@ from gap_kernel.models.governance import ActionTypeSpec, GovernanceDecision
 from gap_kernel.models.intent import IntentVector
 from gap_kernel.models.strategy import StrategyProposal
 from gap_kernel.models.world import WorldModel
-from gap_kernel.service.kernel_server import GovernanceService
+from gap_kernel.service.kernel_server import (
+    GovernanceService,
+    load_trust_root,
+    trust_root_path,
+)
 
 
 class GovernanceClientError(Exception):
@@ -110,6 +114,13 @@ class SubprocessGovernanceClient:
     The agent side holds only the public key and a stdio request channel — the
     kernel, its private signing key, and its policy registry live entirely in the
     child process and are unreachable from here (no in-process import path).
+
+    When a trust root is deployed (``GAP_TRUST_ROOT``), the client PINS the
+    child's identity to the public key that trust root names. The pin is read
+    from the trust root file, never taken as a caller argument: a caller-supplied
+    expected key would be chosen by the same process that spawns the child, which
+    proves nothing. ``require_trust_root=True`` additionally refuses to start
+    when no trust root is deployed at all.
     """
 
     def __init__(
@@ -117,6 +128,7 @@ class SubprocessGovernanceClient:
         python_executable: Optional[str] = None,
         timeout: float = 30.0,
         governed_config: Optional[dict] = None,
+        require_trust_root: bool = False,
     ):
         self._timeout = timeout
         # readline() cannot be interrupted portably (no select() on Windows pipes),
@@ -135,6 +147,15 @@ class SubprocessGovernanceClient:
         # fails partway — close()/__del__ rely on them for cleanup.
         self._config_path: Optional[str] = None
         self._proc = None
+        # Resolved before the child is spawned so a missing/unusable trust root
+        # fails before any kernel process exists. The path is NOT copied into
+        # argv: the child re-reads the same deployer-owned environment variable
+        # itself, so the parent never gets to name the child's trust root.
+        self._trust_root = (
+            load_trust_root()
+            if require_trust_root or trust_root_path() is not None
+            else None
+        )
         argv = [python_executable or sys.executable, "-m", "gap_kernel.service.kernel_server"]
         # Any failure after this point (Popen exec error, or a child that fails
         # closed on a tampered profile so the handshake errors) must still clean
@@ -158,6 +179,17 @@ class SubprocessGovernanceClient:
                 bufsize=1,
             )
             self._public_key_hex = self._call({"method": "get_public_key"})["public_key_hex"]
+            if (
+                self._trust_root is not None
+                and self._public_key_hex != self._trust_root.kernel_public_key_hex
+            ):
+                # The process answering this channel is not the kernel the
+                # deployer pinned. Every later decision would still verify —
+                # against the wrong key — so the channel is refused here.
+                raise GovernanceClientError(
+                    "governance kernel identity does not match the key pinned in "
+                    f"trust root '{self._trust_root.path}'"
+                )
         except BaseException:
             self.close()  # idempotent; reaps any child + unlinks the temp file
             raise

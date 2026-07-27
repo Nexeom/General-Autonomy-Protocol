@@ -50,6 +50,7 @@ from gap_kernel.models.intent import (
 )
 from gap_kernel.models.strategy import StrategyProposal, compute_proposal_digest
 from gap_kernel.models.world import WorldModel
+from gap_kernel.world_model.store import evidence_is_attested
 
 
 # ---------------------------------------------------------------------------
@@ -118,11 +119,23 @@ def _is_constraint_active(constraint: Constraint, current_time: datetime) -> boo
 # Constraint Violation Checks
 # ---------------------------------------------------------------------------
 
+def _jurisdiction_key(properties: dict) -> str:
+    """The property the GDPR gate reads a target's jurisdiction from.
+
+    ``geo`` wins when present, otherwise the ``jurisdiction`` alias — the same
+    order the gate resolves it in, so the attestation check interrogates exactly
+    the key the verdict turns on. When neither is carried this still names a key,
+    which is unattested and therefore fails closed.
+    """
+    return "geo" if "geo" in properties else "jurisdiction"
+
+
 def _check_constraint_violation(
     proposal: StrategyProposal,
     constraint: Constraint,
     world_state: WorldModel,
     allow_untracked_targets: bool = True,
+    require_attested_evidence: bool = False,
 ) -> bool:
     """
     Check if a proposal violates a constraint.
@@ -130,12 +143,19 @@ def _check_constraint_violation(
     Uses a rule-based evaluation engine that maps constraint names to
     concrete checks. This is the extensible policy evaluation core.
 
-    ``allow_untracked_targets`` is threaded to every evaluator so the
-    world-model-backed ones share one posture; see ``GovernanceKernel``.
+    ``allow_untracked_targets`` and ``require_attested_evidence`` are threaded to
+    every evaluator so the world-model-backed ones share one posture; see
+    ``GovernanceKernel``.
     """
     check_fn = _CONSTRAINT_EVALUATORS.get(constraint.name)
     if check_fn:
-        return check_fn(proposal, constraint, world_state, allow_untracked_targets)
+        return check_fn(
+            proposal,
+            constraint,
+            world_state,
+            allow_untracked_targets,
+            require_attested_evidence,
+        )
 
     # Fail-closed (SA-2 / Fix 1): a constraint with no registered evaluator
     # cannot be certified as satisfied, so it is treated as a violation.
@@ -152,6 +172,7 @@ def _check_gdpr_consent(
     constraint: Constraint,
     world_state: WorldModel,
     allow_untracked_targets: bool = True,
+    require_attested_evidence: bool = False,
 ) -> bool:
     """Check if proposal involves contacting an entity without GDPR consent.
 
@@ -159,6 +180,12 @@ def _check_gdpr_consent(
     When ``allow_untracked_targets`` is False, a target the world model does not
     carry — or carries without a jurisdiction — is a violation: the gate has
     nothing to evaluate, and an unevaluable HARD constraint must not pass.
+
+    Under ``require_attested_evidence`` the facts themselves must be evaluable
+    too. Both the jurisdiction that decides whether the gate applies and the
+    consent that satisfies it are read off the world model, so an unattested
+    value is a fact with no source — the gate cannot be certified either way, and
+    that is a violation on the same footing as a missing evaluator.
     """
     for action in proposal.actions:
         if action.action_type in ("send_email", "send_sms", "direct_call", "automated_outreach"):
@@ -166,6 +193,10 @@ def _check_gdpr_consent(
             entity = world_state.entities.get(target_id)
             if entity:
                 props = entity.properties
+                if require_attested_evidence and not evidence_is_attested(
+                    entity, _jurisdiction_key(props)
+                ):
+                    return True
                 geo = props.get("geo", props.get("jurisdiction", ""))
                 if not geo and not allow_untracked_targets:
                     return True
@@ -176,6 +207,10 @@ def _check_gdpr_consent(
                     "MT", "LU",
                 )
                 if is_eu:
+                    if require_attested_evidence and not evidence_is_attested(
+                        entity, "gdpr_consent"
+                    ):
+                        return True
                     consent = props.get("gdpr_consent", False)
                     if not consent:
                         return True
@@ -191,18 +226,25 @@ def _check_contact_hours(
     constraint: Constraint,
     world_state: WorldModel,
     allow_untracked_targets: bool = True,
+    require_attested_evidence: bool = False,
 ) -> bool:
     """Check if proposal involves contacting an entity outside allowed hours.
 
     Same posture as the GDPR gate: when ``allow_untracked_targets`` is False, an
     absent target — or one carrying no ``local_hour`` — leaves the window
-    unknowable, which is a violation rather than a pass.
+    unknowable, which is a violation rather than a pass. Under
+    ``require_attested_evidence`` an unattested ``local_hour`` is equally
+    unknowable: nothing vouches for the number the window is read from.
     """
     for action in proposal.actions:
         if action.action_type in ("send_email", "send_sms", "direct_call", "automated_outreach"):
             target_id = action.target
             entity = world_state.entities.get(target_id)
             if entity:
+                if require_attested_evidence and not evidence_is_attested(
+                    entity, "local_hour"
+                ):
+                    return True
                 local_hour = entity.properties.get("local_hour")
                 if local_hour is None:
                     if not allow_untracked_targets:
@@ -219,6 +261,7 @@ def _check_cost_ceiling(
     constraint: Constraint,
     world_state: WorldModel,
     allow_untracked_targets: bool = True,
+    require_attested_evidence: bool = False,
 ) -> bool:
     """Check if proposal's estimated cost exceeds the ceiling.
 
@@ -244,6 +287,7 @@ def _check_ai_interaction_disclosure(
     constraint: Constraint,
     world_state: WorldModel,
     allow_untracked_targets: bool = True,
+    require_attested_evidence: bool = False,
 ) -> bool:
     """Transparency (Category 3): an action that interacts directly with an
     individual must disclose it is an AI system. An interactive action without
@@ -260,6 +304,7 @@ def _check_fairness_evaluation(
     constraint: Constraint,
     world_state: WorldModel,
     allow_untracked_targets: bool = True,
+    require_attested_evidence: bool = False,
 ) -> bool:
     """Anti-Discrimination (Category 4): a consequential decision affecting an
     individual must carry a Fairness Evaluation. An action flagged
@@ -277,6 +322,7 @@ def _check_aml_screening(
     constraint: Constraint,
     world_state: WorldModel,
     allow_untracked_targets: bool = True,
+    require_attested_evidence: bool = False,
 ) -> bool:
     """Financial (Category 5): a financial transaction above the constraint's
     ``threshold`` (default 0 — screen everything) must carry AML screening AND a
@@ -306,6 +352,7 @@ def _check_minimum_necessary_phi(
     constraint: Constraint,
     world_state: WorldModel,
     allow_untracked_targets: bool = True,
+    require_attested_evidence: bool = False,
 ) -> bool:
     """Healthcare (Category 6): PHI access must be the minimum necessary. A bulk
     PHI access (``scope == "bulk"`` or ``record_count`` over the constraint's
@@ -334,6 +381,7 @@ def _check_safety_boundary(
     constraint: Constraint,
     world_state: WorldModel,
     allow_untracked_targets: bool = True,
+    require_attested_evidence: bool = False,
 ) -> bool:
     """Safety (Category 7): a safety-critical action must affirmatively be within
     its hard safety boundary. A ``safety_critical`` action that is not declared
@@ -351,6 +399,7 @@ def _check_ip_content_risk(
     constraint: Constraint,
     world_state: WorldModel,
     allow_untracked_targets: bool = True,
+    require_attested_evidence: bool = False,
 ) -> bool:
     """IP / Content (Category 8): a content-generating action must carry an IP-risk
     assessment, and high-risk output (substantial copyright similarity, third-party
@@ -410,6 +459,7 @@ def _format_human_reason(
     violations: List[str],
     proposal: StrategyProposal,
     world_state: WorldModel,
+    require_attested_evidence: bool = False,
 ) -> str:
     """Create a human-readable rejection explanation."""
     parts = []
@@ -420,6 +470,14 @@ def _format_human_reason(
             for target in targets:
                 entity = world_state.entities.get(target)
                 if entity:
+                    unattested = _unattested_evidence(entity, require_attested_evidence)
+                    if unattested:
+                        parts.append(
+                            f"Entity {target} carries no attested provenance for "
+                            f"{', '.join(unattested)}. The consent gate rules on those "
+                            f"facts, so unattested values cannot satisfy it."
+                        )
+                        continue
                     geo = entity.properties.get("geo", entity.properties.get("jurisdiction", "unknown"))
                     parts.append(
                         f"Entity {target} is {geo} jurisdiction. "
@@ -431,6 +489,18 @@ def _format_human_reason(
         else:
             parts.append(f"Constraint '{v}' was violated.")
     return " ".join(parts) if parts else "One or more constraints were violated."
+
+
+def _unattested_evidence(entity, require_attested_evidence: bool) -> List[str]:
+    """The governance-relevant keys on ``entity`` the consent gate reads without
+    attested provenance behind them. Empty when attestation is not required."""
+    if not require_attested_evidence:
+        return []
+    return [
+        key
+        for key in (_jurisdiction_key(entity.properties), "gdpr_consent")
+        if not evidence_is_attested(entity, key)
+    ]
 
 
 def _serialize_active_policies(constraints: List[Constraint]) -> dict:
@@ -714,9 +784,11 @@ class GovernanceKernel:
     - Structured Uncertainty: epistemic state at moment of authorization
     - Separation of Creation and Validation enforcement
 
-    A governed kernel owns the two inputs an agent would otherwise author into
-    the evaluation: the clock (``_resolve_time``) and whether a world-model-backed
-    gate may pass on an untracked target (``allow_untracked_targets``).
+    A governed kernel owns the three inputs an agent would otherwise author into
+    the evaluation: the clock (``_resolve_time``), whether a world-model-backed
+    gate may pass on an untracked target (``allow_untracked_targets``), and
+    whether a world-model fact with no attested source counts as evidence
+    (``require_attested_evidence``).
     """
 
     def __init__(
@@ -730,6 +802,7 @@ class GovernanceKernel:
         kernel_key_id: str = "governance_kernel",
         governed: bool = False,
         allow_untracked_targets: Optional[bool] = None,
+        require_attested_evidence: Optional[bool] = None,
         decision_ttl_seconds: int = _DEFAULT_DECISION_TTL_SECONDS,
     ):
         # Governed mode fails closed: it REQUIRES the industry-specific regulatory
@@ -763,6 +836,18 @@ class GovernanceKernel:
             (not self._governed)
             if allow_untracked_targets is None
             else allow_untracked_targets
+        )
+        # The world model is EVIDENCE, not telemetry: the world-model-backed gates
+        # rule on a target's jurisdiction, consent and local hour, so whatever can
+        # write those facts decides the verdict. Governed mode therefore requires
+        # them to carry attested provenance (see gap_kernel.world_model.store) and
+        # treats an unattested value as unevaluable — a violation, exactly like a
+        # constraint with no registered evaluator. Open/prototype mode keeps the
+        # permissive behavior; either posture can be set explicitly.
+        self._require_attested_evidence = (
+            self._governed
+            if require_attested_evidence is None
+            else require_attested_evidence
         )
         self._action_type_registry: Dict[str, ActionTypeSpec] = dict(_BASELINE_ACTION_TYPES)
         self._dynamic_risk_engine = DynamicRiskEngine(
@@ -929,7 +1014,8 @@ class GovernanceKernel:
         for constraint in active_constraints:
             if constraint.type == ConstraintType.HARD:
                 if _check_constraint_violation(
-                    proposal, constraint, world_state, self._allow_untracked_targets
+                    proposal, constraint, world_state,
+                    self._allow_untracked_targets, self._require_attested_evidence,
                 ):
                     hard_violations.append(constraint.name)
 
@@ -940,7 +1026,10 @@ class GovernanceKernel:
                 authorization_level=phase.default_authorization_level,
                 violated_constraints=hard_violations,
                 rejection_reason=_format_structured_reason(hard_violations),
-                rejection_detail=_format_human_reason(hard_violations, proposal, world_state),
+                rejection_detail=_format_human_reason(
+                    hard_violations, proposal, world_state,
+                    self._require_attested_evidence,
+                ),
                 evaluated_at=current_time,
             )
 
@@ -1147,7 +1236,8 @@ class GovernanceKernel:
         for constraint in active_constraints:
             if constraint.type == ConstraintType.HARD:
                 if _check_constraint_violation(
-                    proposal, constraint, world_state, self._allow_untracked_targets
+                    proposal, constraint, world_state,
+                    self._allow_untracked_targets, self._require_attested_evidence,
                 ):
                     hard_violations.append(constraint.name)
 
@@ -1158,7 +1248,8 @@ class GovernanceKernel:
         for constraint in active_constraints:
             if constraint.type == ConstraintType.SOFT:
                 if _constraint_has_evaluator(constraint) and _check_constraint_violation(
-                    proposal, constraint, world_state, self._allow_untracked_targets
+                    proposal, constraint, world_state,
+                    self._allow_untracked_targets, self._require_attested_evidence,
                 ):
                     soft_violations.append(constraint.name)
 
@@ -1176,7 +1267,8 @@ class GovernanceKernel:
                 violated_constraints=hard_violations,
                 rejection_reason=_format_structured_reason(hard_violations),
                 rejection_detail=_format_human_reason(
-                    hard_violations, proposal, world_state
+                    hard_violations, proposal, world_state,
+                    self._require_attested_evidence,
                 ),
                 temporal_context=_get_temporal_snapshot(current_time),
                 policy_snapshot=_serialize_active_policies(active_constraints),

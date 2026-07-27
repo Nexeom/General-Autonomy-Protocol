@@ -648,18 +648,21 @@ class TestAPINewFeatures:
         resp = client.get("/governance/action-types/nonexistent")
         assert resp.status_code == 404
 
-    def test_register_custom_action_type_via_api(self, client):
-        """POST /governance/action-types registers a new type."""
+    def test_action_type_registration_is_not_an_http_operation(self, client):
+        """
+        The Action Type Registry is governance configuration: it arrives inside
+        the signed Applicability Profile, not over the wire. There is no HTTP
+        route that writes it, so `registered_by` cannot be an unauthenticated
+        caller's free-text claim.
+        """
         resp = client.post("/governance/action-types", json={
             "type_id": "custom_analysis",
             "description": "Run a custom analysis",
             "default_authorization_level": "L2",
             "registered_by": "admin",
         })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["type_id"] == "custom_analysis"
+        assert resp.status_code == 405
 
-        # Verify it's now in the registry
-        resp2 = client.get("/governance/action-types/custom_analysis")
-        assert resp2.status_code == 200
+        # The type was not created as a side effect, and reads still work.
+        assert client.get("/governance/action-types/custom_analysis").status_code == 404
+        assert client.get("/governance/action-types").status_code == 200

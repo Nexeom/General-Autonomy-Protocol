@@ -287,10 +287,11 @@ def test_agent_does_not_hold_the_switch():
 
 # --- Governed deployment wiring ---------------------------------------------
 
-def test_governed_deployment_always_has_a_killswitch():
+def test_governed_deployment_always_has_a_killswitch(tmp_path, monkeypatch):
     from gap_kernel.crypto.signing import PublicKeyRegistry, generate_keypair
     from gap_kernel.governance.deployment import build_governed_deployment
     from gap_kernel.governance.profile import ApplicabilityProfile, sign_profile
+    from gap_kernel.service.kernel_server import provision_trust_root
 
     priv, pub = generate_keypair()
     registry = PublicKeyRegistry({"regulatory_authority": pub})
@@ -300,9 +301,17 @@ def test_governed_deployment_always_has_a_killswitch():
         priv, "regulatory_authority",
     )
 
+    # A governed deployment resolves its trust root and its ledgers from the
+    # deployment, not from its caller, so provision both rather than opting out.
+    root = provision_trust_root(
+        str(tmp_path / "trust"), {"regulatory_authority": pub}
+    )
+    monkeypatch.setenv("GAP_TRUST_ROOT", root.path)
+
     loop = build_governed_deployment(
         applicability_profile=profile, profile_key_registry=registry,
         world_model=_world(), strategy_generator=_CountingGen(), isolated=False,
+        ledger_dir=str(tmp_path / "ledgers"),
     )
     # A governed deployment is never without corrigibility.
     assert loop.kill_switch is not None

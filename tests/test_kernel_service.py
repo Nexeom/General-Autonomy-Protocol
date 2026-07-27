@@ -225,6 +225,73 @@ def test_action_type_registry_is_readable_but_not_writable_across_the_boundary()
         assert not hasattr(client, "register_action_type")
 
 
+# --- the trust root the child resolves for itself --------------------------
+
+
+def test_trust_root_keys_displace_the_registry_that_crossed_with_the_profile(tmp_path):
+    """``kernel_from_governed_config`` consults the trust root's keys ONLY. The
+    registry in the config blob is authored by whoever authored the profile, so
+    honouring it would let any profile verify against its own author's key."""
+    from gap_kernel.service.kernel_server import (
+        kernel_from_governed_config,
+        provision_trust_root,
+    )
+    from gap_kernel.governance.profile import ProfileVerificationError
+
+    authority_priv, authority_pub = generate_keypair()
+    trust_root = provision_trust_root(str(tmp_path / "trust"), {_KID: authority_pub})
+
+    def _config(private_key_hex, registry):
+        profile = ApplicabilityProfile(
+            profile_id="prof",
+            tier1_constraints=[Constraint(name="cost_ceiling", type=ConstraintType.HARD,
+                                          description="Floor $100.00")],
+            issued_at=datetime(2026, 1, 1),
+        )
+        return dump_governed_config(sign_profile(profile, private_key_hex, _KID), registry)
+
+    # A profile signed by an attacker, vouched for by the attacker's own key.
+    attacker_priv, attacker_pub = generate_keypair()
+    with pytest.raises(ProfileVerificationError):
+        kernel_from_governed_config(
+            _config(attacker_priv, PublicKeyRegistry({_KID: attacker_pub})),
+            trust_root=trust_root,
+        )
+
+    # The authority's profile verifies with an EMPTY registry in the blob, and
+    # the kernel signs as the pinned identity rather than a fresh per-process key.
+    kernel = kernel_from_governed_config(
+        _config(authority_priv, PublicKeyRegistry()), trust_root=trust_root
+    )
+    assert kernel.public_key_hex == trust_root.kernel_public_key_hex
+
+
+def test_an_unusable_trust_root_fails_closed_on_both_sides(tmp_path, monkeypatch):
+    """A configured-but-unusable trust root stops the client before it spawns
+    anything, AND stops the kernel process before its serve loop starts — so the
+    child refuses independently, not only because the parent checked first."""
+    import os
+    import subprocess
+    import sys
+
+    from gap_kernel.service.kernel_server import TRUST_ROOT_ENV, TrustRootError
+
+    broken = tmp_path / "trust_root.json"
+    broken.write_text('{"profile_keys": {}}', encoding="utf-8")
+    monkeypatch.setenv(TRUST_ROOT_ENV, str(broken))
+
+    with pytest.raises(TrustRootError):
+        SubprocessGovernanceClient()
+
+    child = subprocess.run(
+        [sys.executable, "-m", "gap_kernel.service.kernel_server"],
+        input='{"method": "get_public_key", "id": 1}\n',
+        capture_output=True, text=True, env=dict(os.environ), timeout=60,
+    )
+    assert child.returncode != 0
+    assert child.stdout.strip() == ""  # no decision channel was ever opened
+
+
 def test_failed_construction_leaves_no_temp_file():
     """A construction that fails — Popen exec error, or a tampered profile the
     child rejects — must deterministically clean up its temp config file, not

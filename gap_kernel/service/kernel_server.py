@@ -10,18 +10,32 @@ its private key, or its registry, so it cannot read, modify, or forge governance
 The service is transport-agnostic (``handle`` maps a request dict to a response
 dict); ``serve_stdio`` runs it as a subprocess over newline-delimited JSON, and
 ``GovernanceClient`` implementations (gap_kernel/client) consume it.
+
+The kernel's TRUST ROOT — the key that verifies the signed Applicability Profile,
+and the identity the kernel signs decisions with — is resolved here from a
+deployer-owned path (``GAP_TRUST_ROOT``), never from the config the agent-side
+parent hands down. See :class:`TrustRoot`.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
+import stat
 import sys
-from typing import Optional, TextIO
+from dataclasses import dataclass
+from typing import Dict, Optional, TextIO, Tuple
 
 from pydantic import ValidationError
 
-from gap_kernel.crypto.signing import PublicKeyRegistry
+from gap_kernel.crypto.signing import (
+    PublicKeyRegistry,
+    generate_keypair,
+    sign,
+    verify,
+)
+from gap_kernel.errors import GovernanceConfigError
 from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.governance.profile import ApplicabilityProfile
 from gap_kernel.models.intent import IntentVector
@@ -29,6 +43,20 @@ from gap_kernel.models.strategy import StrategyProposal
 from gap_kernel.models.world import WorldModel
 
 logger = logging.getLogger("gap_kernel.service")
+
+# The deployer names the trust root through the environment the kernel process
+# is launched into. It is deliberately NOT a command-line argument and NOT a
+# field in the config blob: both of those are authored by the agent-side parent,
+# and a trust root the parent authors is not a trust root.
+TRUST_ROOT_ENV = "GAP_TRUST_ROOT"
+
+TRUST_ROOT_FILENAME = "trust_root.json"
+KERNEL_IDENTITY_FILENAME = "kernel_identity.json"
+
+# Proof-of-possession domain: signing this with the identity's private key and
+# verifying against the pinned public key proves the two belong together without
+# needing a key-derivation primitive outside gap_kernel.crypto.signing.
+_IDENTITY_PROOF_DOMAIN = "gap.kernel_identity.v1:"
 
 # The agent side frames one request per line. A longer line is refused without
 # being buffered — otherwise the side this boundary exists to contain can drive
@@ -44,31 +72,238 @@ ERROR_REQUEST_TOO_LARGE = "request_too_large"
 ERROR_INTERNAL = "internal_error"
 
 
+class TrustRootError(GovernanceConfigError):
+    """Raised when the independently-deployed trust root is absent or unusable.
+
+    A subclass of :class:`GovernanceConfigError`: an unresolvable trust root is a
+    governed deployment running without its required configuration, so it fails
+    closed on the same path as a missing regulatory floor.
+    """
+
+
+@dataclass(frozen=True)
+class TrustRoot:
+    """The kernel's independently-deployed trust root.
+
+    Two things a governed kernel must NOT take from the agent-side parent:
+
+      * ``profile_keys`` — the public keys an Applicability Profile may be signed
+        by. Taking these from the same party that supplies the profile makes
+        verification circular: the profile is checked against its own author's
+        key, so any profile the parent chooses verifies.
+      * the kernel identity (``kernel_public_key_hex`` + the private key at
+        ``kernel_identity_path``) — persisted so the key an auditor pins is the
+        same key across restarts, instead of one minted per process.
+
+    The file lives on a path the deployer owns and names through
+    ``GAP_TRUST_ROOT``; the kernel process reads it directly.
+    """
+
+    path: str
+    profile_keys: Dict[str, str]
+    kernel_public_key_hex: str
+    kernel_identity_path: str
+
+    def profile_key_registry(self) -> PublicKeyRegistry:
+        """The ONLY registry a trust-rooted kernel verifies profiles against."""
+        return PublicKeyRegistry(dict(self.profile_keys))
+
+    def load_kernel_identity(self) -> Tuple[str, str]:
+        """Return ``(private_key_hex, public_key_hex)`` for the pinned identity.
+
+        Fails closed if the private key does not correspond to the pinned public
+        key: an identity that cannot satisfy its own pin is unevaluable, and the
+        kernel would otherwise sign decisions under a key nobody pinned.
+        """
+        identity = _read_json(self.kernel_identity_path, "kernel identity")
+        private_key_hex = identity.get("private_key_hex")
+        if not isinstance(private_key_hex, str) or not private_key_hex:
+            raise TrustRootError(
+                f"Kernel identity '{self.kernel_identity_path}' has no "
+                f"'private_key_hex'; the kernel cannot sign as its pinned identity."
+            )
+        proof = _IDENTITY_PROOF_DOMAIN + self.kernel_public_key_hex
+        try:
+            matches = verify(self.kernel_public_key_hex, proof, sign(private_key_hex, proof))
+        except ValueError as exc:
+            raise TrustRootError(
+                f"Kernel identity '{self.kernel_identity_path}' is malformed: {exc}"
+            ) from exc
+        if not matches:
+            raise TrustRootError(
+                f"Kernel identity '{self.kernel_identity_path}' does not match the "
+                f"public key pinned in trust root '{self.path}'."
+            )
+        return private_key_hex, self.kernel_public_key_hex
+
+
+def _read_json(path: str, what: str) -> dict:
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except OSError as exc:
+        raise TrustRootError(f"Cannot read {what} at '{path}': {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise TrustRootError(f"The {what} at '{path}' is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise TrustRootError(f"The {what} at '{path}' must be a JSON object.")
+    return data
+
+
+def trust_root_path() -> Optional[str]:
+    """The deployer-named trust root path, or ``None`` when none is configured."""
+    return os.environ.get(TRUST_ROOT_ENV) or None
+
+
+def load_trust_root(path: Optional[str] = None) -> TrustRoot:
+    """Load the trust root named by ``GAP_TRUST_ROOT`` (or an explicit ``path``).
+
+    Raises :class:`TrustRootError` when none is configured or the file cannot be
+    used. There is no fallback to caller-supplied keys: falling back would hand
+    the trust decision straight back to the party the trust root exists to
+    exclude.
+    """
+    resolved = path or trust_root_path()
+    if not resolved:
+        raise TrustRootError(
+            f"No independently-deployed trust root: {TRUST_ROOT_ENV} is not set. "
+            f"The governance kernel would otherwise verify the Applicability "
+            f"Profile against a key supplied by the same process that supplied "
+            f"the profile. Provision one with provision_trust_root(), or pass "
+            f"require_independent_trust_root=False for prototyping only."
+        )
+    data = _read_json(resolved, "trust root")
+
+    profile_keys = data.get("profile_keys")
+    if not isinstance(profile_keys, dict) or not profile_keys:
+        raise TrustRootError(
+            f"Trust root '{resolved}' declares no 'profile_keys'; no Applicability "
+            f"Profile could be verified against it."
+        )
+    if not all(isinstance(k, str) and isinstance(v, str) and v for k, v in profile_keys.items()):
+        raise TrustRootError(
+            f"Trust root '{resolved}' has a malformed 'profile_keys' map."
+        )
+
+    kernel_public_key_hex = data.get("kernel_public_key_hex")
+    if not isinstance(kernel_public_key_hex, str) or not kernel_public_key_hex:
+        raise TrustRootError(
+            f"Trust root '{resolved}' pins no 'kernel_public_key_hex'; the kernel's "
+            f"identity would be whatever the process minted at start-up."
+        )
+
+    identity_path = data.get("kernel_identity_path")
+    if not isinstance(identity_path, str) or not identity_path:
+        raise TrustRootError(
+            f"Trust root '{resolved}' names no 'kernel_identity_path'."
+        )
+    # Relative identity paths resolve against the trust root's own directory, so
+    # a provisioned trust root is relocatable as a unit.
+    if not os.path.isabs(identity_path):
+        identity_path = os.path.join(os.path.dirname(os.path.abspath(resolved)), identity_path)
+
+    return TrustRoot(
+        path=os.path.abspath(resolved),
+        profile_keys=dict(profile_keys),
+        kernel_public_key_hex=kernel_public_key_hex,
+        kernel_identity_path=identity_path,
+    )
+
+
+def provision_trust_root(directory: str, profile_keys: Dict[str, str]) -> TrustRoot:
+    """Create (or re-read) a trust root in ``directory`` and return it.
+
+    Idempotent in the identity: an existing ``kernel_identity.json`` is kept, so
+    re-provisioning a deployment does not silently rotate the key external
+    auditors have pinned. The identity file is written 0600 where the platform
+    supports it — on a host where the agent process runs as the same user this is
+    hygiene, not a boundary; running the kernel as a separate user is what makes
+    the private key genuinely unreachable from the agent side.
+
+    The deployer then points ``GAP_TRUST_ROOT`` at the returned ``path``.
+    """
+    os.makedirs(directory, exist_ok=True)
+    identity_path = os.path.join(directory, KERNEL_IDENTITY_FILENAME)
+    if os.path.exists(identity_path):
+        identity = _read_json(identity_path, "kernel identity")
+        private_key_hex = identity.get("private_key_hex")
+        public_key_hex = identity.get("public_key_hex")
+        if not isinstance(private_key_hex, str) or not isinstance(public_key_hex, str):
+            raise TrustRootError(
+                f"Existing kernel identity '{identity_path}' is malformed; refusing "
+                f"to overwrite it — an operator must resolve the identity first."
+            )
+    else:
+        private_key_hex, public_key_hex = generate_keypair()
+        _write_json(identity_path, {
+            "private_key_hex": private_key_hex,
+            "public_key_hex": public_key_hex,
+        })
+        try:
+            os.chmod(identity_path, stat.S_IRUSR | stat.S_IWUSR)
+        except OSError:  # pragma: no cover - platform dependent
+            logger.warning("could not restrict permissions on %s", identity_path)
+
+    root_path = os.path.join(directory, TRUST_ROOT_FILENAME)
+    _write_json(root_path, {
+        "profile_keys": dict(profile_keys),
+        "kernel_public_key_hex": public_key_hex,
+        "kernel_identity_path": KERNEL_IDENTITY_FILENAME,
+    })
+    return load_trust_root(root_path)
+
+
+def _write_json(path: str, data: dict) -> None:
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2, sort_keys=True)
+
+
 def dump_governed_config(
     applicability_profile: ApplicabilityProfile,
     profile_key_registry: PublicKeyRegistry,
 ) -> dict:
     """Serialize the config a subprocess kernel needs to run GOVERNED — the signed
     Applicability Profile plus the (public-key-only) profile key registry. No
-    private key or secret crosses the boundary; the subprocess re-verifies the
-    profile signature on load and fails closed if it has been tampered with."""
+    private key or secret crosses the boundary.
+
+    The registry here is a PROTOTYPE convenience: it is authored by the same
+    process that authors the profile, so it cannot establish trust on its own.
+    When the kernel process resolves a trust root, the registry in this blob is
+    ignored entirely — see :func:`kernel_from_governed_config`.
+    """
     return {
         "profile": applicability_profile.model_dump(mode="json"),
         "registry": profile_key_registry.as_dict(),
     }
 
 
-def kernel_from_governed_config(config: dict) -> GovernanceKernel:
+def kernel_from_governed_config(
+    config: dict, trust_root: Optional[TrustRoot] = None
+) -> GovernanceKernel:
     """Construct a governed GovernanceKernel from a ``dump_governed_config`` dict.
 
-    The kernel verifies the profile signature against the supplied registry and
-    raises (fail closed) on an unsigned / tampered / unknown-key profile."""
+    With a ``trust_root``, the profile is verified against the trust root's keys
+    and the kernel signs with the trust root's persisted identity; the registry
+    inside ``config`` is not consulted at all. Without one, the config's own
+    registry is used — the prototype posture, in which the caller both supplies
+    and vouches for the profile.
+
+    Either way the kernel raises (fail closed) on an unsigned / tampered /
+    unknown-key profile.
+    """
     profile = ApplicabilityProfile.model_validate(config["profile"])
-    registry = PublicKeyRegistry(config.get("registry") or {})
+    if trust_root is not None:
+        registry = trust_root.profile_key_registry()
+        signing_key_hex, public_key_hex = trust_root.load_kernel_identity()
+    else:
+        registry = PublicKeyRegistry(config.get("registry") or {})
+        signing_key_hex = public_key_hex = None
     return GovernanceKernel(
         governed=True,
         applicability_profile=profile,
         profile_key_registry=registry,
+        signing_key_hex=signing_key_hex,
+        public_key_hex=public_key_hex,
     )
 
 
@@ -192,12 +427,28 @@ def serve_stdio(
         stream_out.flush()
 
 
-def _kernel_from_argv() -> Optional[GovernanceKernel]:
-    """If a governed-config file path was passed as argv[1], build a governed
-    kernel from it; otherwise return None (an open kernel is used)."""
+def _kernel_for_service() -> Optional[GovernanceKernel]:
+    """Build the kernel this process will serve.
+
+    The trust root comes from THIS process's environment, so it is established by
+    the deployer that launched the kernel rather than by the parent that asked
+    for a decision. Everything argv carries — the governed config blob — is
+    treated as agent-side data: it names the profile, never the key that verifies
+    it. A configured-but-unusable trust root raises here, which exits the process
+    before the serve loop starts: no governance runs at all, rather than running
+    against a trust root nobody could evaluate.
+    """
+    root = load_trust_root() if trust_root_path() is not None else None
     if len(sys.argv) > 1 and sys.argv[1]:
         with open(sys.argv[1], "r", encoding="utf-8") as fh:
-            return kernel_from_governed_config(json.load(fh))
+            return kernel_from_governed_config(json.load(fh), trust_root=root)
+    if root is not None:
+        # Open kernel, pinned identity: even without a regulatory floor the
+        # decisions this process signs must be attributable to the pinned key.
+        signing_key_hex, public_key_hex = root.load_kernel_identity()
+        return GovernanceKernel(
+            signing_key_hex=signing_key_hex, public_key_hex=public_key_hex
+        )
     return None
 
 
@@ -205,4 +456,4 @@ if __name__ == "__main__":
     # Claim the protocol stream before anything else runs, so nothing on the way
     # to the serve loop can write to it either.
     _protocol_stream = _claim_stdout_for_protocol()
-    serve_stdio(stream_out=_protocol_stream, kernel=_kernel_from_argv())
+    serve_stdio(stream_out=_protocol_stream, kernel=_kernel_for_service())
