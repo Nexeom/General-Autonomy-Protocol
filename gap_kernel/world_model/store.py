@@ -26,7 +26,12 @@ from typing import Any, Dict, Iterable, List, Optional, Set
 from pydantic import BaseModel
 
 from gap_kernel._time import utcnow
-from gap_kernel.models.world import EntityState, WorldModel
+from gap_kernel.models.world import (
+    EVIDENCE_PROPERTY as _EVIDENCE_PROPERTY,
+    GOVERNANCE_RELEVANT_PROPERTIES as _GOVERNANCE_RELEVANT_PROPERTIES,
+    EntityState,
+    WorldModel,
+)
 
 logger = logging.getLogger("gap_kernel.world_model")
 
@@ -38,17 +43,16 @@ logger = logging.getLogger("gap_kernel.world_model")
 #   local_hour            -> _check_contact_hours
 # A key added to a world-model-backed evaluator belongs here too, otherwise the
 # kernel would rule on a fact nobody vouched for.
-GOVERNANCE_RELEVANT_PROPERTIES = frozenset({
-    "gdpr_consent",
-    "geo",
-    "jurisdiction",
-    "local_hour",
-})
+# Both are defined on the model (gap_kernel.models.world) so that the properties
+# themselves can defend the invariant: a direct write to a governance-relevant
+# key revokes its attested standing wherever that write comes from, not only on
+# the paths this store owns.
+GOVERNANCE_RELEVANT_PROPERTIES = _GOVERNANCE_RELEVANT_PROPERTIES
 
 # The reserved property carrying an entity's evidence provenance. The store is
-# its only writer: a caller-supplied value is discarded before every write, so
-# an anonymous ingest cannot declare its own facts attested.
-EVIDENCE_PROPERTY = "_evidence_provenance"
+# its only *attesting* writer: a caller-supplied value is discarded before every
+# write, so an anonymous ingest cannot declare its own facts attested.
+EVIDENCE_PROPERTY = _EVIDENCE_PROPERTY
 
 # The channel a write arrives on when none is declared. Naming it keeps an
 # unattested write auditable rather than silent.

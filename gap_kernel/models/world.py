@@ -19,6 +19,20 @@ logger = logging.getLogger("gap_kernel.world_model")
 # produced the outcome (see ``EntityState.record_contact``).
 PROTECTED_PROPERTIES = frozenset({"last_contacted", "contact_method"})
 
+# Properties a governed kernel's constraint evaluators read to decide whether an
+# action is permitted. They live here rather than in the store because the
+# invariant they carry belongs to the data: a value is only as trustworthy as the
+# channel that last wrote it, and any writer can reach these attributes.
+GOVERNANCE_RELEVANT_PROPERTIES = frozenset({
+    "gdpr_consent",
+    "geo",
+    "jurisdiction",
+    "local_hour",
+})
+
+# The reserved property carrying an entity's evidence provenance.
+EVIDENCE_PROPERTY = "_evidence_provenance"
+
 # The drift log is embedded in every world-state snapshot, and every snapshot is
 # copied into a lineage record, so an unbounded log grows each audit record
 # without limit. Only recent drift is operationally meaningful; the durable
@@ -45,16 +59,59 @@ class EntityProperties(dict):
                 "Refused a property merge writing kernel-derived evidence: %s",
                 ", ".join(sorted(refused)),
             )
+        self._invalidate_provenance(merged)
         super().update(merged)
+
+    def __setitem__(self, key, value) -> None:
+        self._invalidate_provenance((key,))
+        super().__setitem__(key, value)
 
     def setdefault(self, key, default=None):
         if key in PROTECTED_PROPERTIES and key not in self:
             return None
+        if key not in self:
+            self._invalidate_provenance((key,))
         return super().setdefault(key, default)
 
     def __ior__(self, other):
         self.update(other)
         return self
+
+    def _invalidate_provenance(self, keys) -> None:
+        """Drop the attested standing of any governance-relevant key being written.
+
+        A provenance stamp vouches for the values that were present when the
+        store wrote it. Any later write reaching these attributes directly —
+        an executor's result write-back, a sensor payload, anything that did not
+        arrive through ``WorldModelStore`` — leaves the stamp vouching for a value
+        it never saw, which is how an agent launders its own consent. The write
+        is allowed; what it loses is its attested standing, until an attested
+        channel re-establishes it. ``WorldModelStore`` stamps after writing, so
+        its own path is unaffected.
+        """
+        touched = {k for k in keys if k in GOVERNANCE_RELEVANT_PROPERTIES}
+        if not touched:
+            return
+        stamp = dict.get(self, EVIDENCE_PROPERTY)
+        if not isinstance(stamp, dict):
+            return
+        declared = stamp.get("governance_properties")
+        if not isinstance(declared, (list, tuple, set)):
+            return
+        remaining = [k for k in declared if k not in touched]
+        if len(remaining) == len(declared):
+            return
+        revoked = sorted(set(declared) - set(remaining))
+        updated = dict(stamp)
+        updated["governance_properties"] = remaining
+        # dict.__setitem__ directly: this key is not governance-relevant, and
+        # going through __setitem__ would re-enter this method.
+        dict.__setitem__(self, EVIDENCE_PROPERTY, updated)
+        logger.warning(
+            "Evidence written outside the world-model store; %s no longer attested: %s",
+            "is" if len(revoked) == 1 else "are",
+            ", ".join(revoked),
+        )
 
 
 class DriftEventLog(list):

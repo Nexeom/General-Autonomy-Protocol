@@ -249,11 +249,20 @@ class ExecutionFabric:
         # only once it has actually succeeded, so a resumed execution re-spends
         # nothing — and an attempt whose reservation FAILED is not waved through
         # on its next try.
-        if row is None:
-            self._reserve_oob_authority(governance_decision)
-        elif _OOB_RESERVATION_KEY not in row.completed_actions:
-            self._reserve_oob_authority(governance_decision)
-            self._execution_ledger.record_action(row.nonce, _OOB_RESERVATION_KEY)
+        # A claim held by this call must be settled even if the attempt aborts by
+        # raising: an unsettled row keeps its in-flight lease, which would lock a
+        # still-valid authorization until the lease expired instead of leaving it
+        # immediately retryable.
+        try:
+            if row is None:
+                self._reserve_oob_authority(governance_decision)
+            elif _OOB_RESERVATION_KEY not in row.completed_actions:
+                self._reserve_oob_authority(governance_decision)
+                self._execution_ledger.record_action(row.nonce, _OOB_RESERVATION_KEY)
+        except BaseException:
+            if row is not None:
+                self._execution_ledger.finish(row.nonce, success=False)
+            raise
 
         start_time = time.monotonic()
         completed = []
@@ -261,24 +270,29 @@ class ExecutionFabric:
         state_changes = []
         already_done = row.completed_actions if row is not None else frozenset()
 
-        for index, action in enumerate(proposal.actions):
-            key = _action_idempotency_key(index, action)
-            if key in already_done:
-                # The side effect happened under this same authorization on an
-                # earlier attempt. Report it as completed, but do NOT re-dispatch
-                # it and do NOT re-apply its world-state change.
-                completed.append(self._already_completed(action))
-                continue
-            result = self._dispatch_action(action)
-            if result["success"]:
-                if row is not None:
-                    self._execution_ledger.record_action(row.nonce, key)
-                completed.append(result)
-                # Update world model with outcome
-                changes = self._apply_state_changes(action, result)
-                state_changes.extend(changes)
-            else:
-                failed.append(result)
+        try:
+            for index, action in enumerate(proposal.actions):
+                key = _action_idempotency_key(index, action)
+                if key in already_done:
+                    # The side effect happened under this same authorization on an
+                    # earlier attempt. Report it as completed, but do NOT re-dispatch
+                    # it and do NOT re-apply its world-state change.
+                    completed.append(self._already_completed(action))
+                    continue
+                result = self._dispatch_action(action)
+                if result["success"]:
+                    if row is not None:
+                        self._execution_ledger.record_action(row.nonce, key)
+                    completed.append(result)
+                    # Update world model with outcome
+                    changes = self._apply_state_changes(action, result)
+                    state_changes.extend(changes)
+                else:
+                    failed.append(result)
+        except BaseException:
+            if row is not None:
+                self._execution_ledger.finish(row.nonce, success=False)
+            raise
 
         elapsed = time.monotonic() - start_time
         success = len(failed) == 0

@@ -32,6 +32,7 @@ from gap_kernel.models.strategy import PlannedAction, StrategyProposal
 from gap_kernel.models.world import EntityState, WorldModel
 from gap_kernel.verification.execution_ledger import (
     STATUS_COMPLETE,
+    STATUS_FAILED,
     STATUS_IN_PROGRESS,
     ExecutionLedger,
     ExecutionReplayError,
@@ -489,7 +490,10 @@ class TestExecutionLedger:
         ledger = ExecutionLedger()
         ledger.begin("n1", decision_id="d1", proposal_id="p1")
         ledger.finish("n1", success=False)
-        assert ledger.status("n1") == STATUS_IN_PROGRESS
+        # A settled failure is FAILED, not IN_PROGRESS: an attempt that stopped
+        # and an attempt still running must be distinguishable, or concurrent
+        # presentations of one authorization all resume and all dispatch.
+        assert ledger.status("n1") == STATUS_FAILED
         row = ledger.begin("n1", decision_id="d1", proposal_id="p1")
         assert row.resumed is True
         assert row.attempts == 2

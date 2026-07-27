@@ -17,17 +17,25 @@ State machine
 
     (absent) --begin--> IN_PROGRESS --finish(success=True)--> COMPLETE
                           ^      |
-                          |      +-- finish(success=False) --+
-                          +---------------- begin -----------+
+                          |      +-- finish(success=False) --> FAILED
+                          +----------------- begin ------------+
 
 * ``begin`` on an unknown nonce claims a fresh row (``resumed=False``).
-* ``begin`` on an IN_PROGRESS row RESUMES it: the attempt counter advances,
+* ``begin`` on a FAILED row RESUMES it: the attempt counter advances,
   ``last_attempt_at`` is stamped, and the actions that already completed are
   returned so the caller can skip their side effects.
 * ``begin`` on a COMPLETE row raises :class:`ExecutionReplayError` — the
   authorization is spent.
-* ``finish(success=False)`` deliberately leaves the row IN_PROGRESS and
-  resumable: a transient dispatch failure must not burn a valid authorization.
+* ``begin`` on an IN_PROGRESS row whose lease is still live also raises: an
+  attempt is running right now, and this one is a concurrent replay. Without
+  that distinction N threads presenting one authorization simultaneously would
+  all resume the same row and all dispatch, so single-use would hold only for
+  sequential callers.
+* ``finish(success=False)`` settles the row as FAILED and resumable: a transient
+  dispatch failure must not burn a valid authorization.
+* An IN_PROGRESS row whose lease has expired is resumable — the process holding
+  it is presumed dead, so a crash mid-dispatch does not strand the
+  authorization. Set ``lease_seconds`` above the longest plausible dispatch.
 
 Pruning keys on ``COALESCE(finished_at, first_seen_at)`` so an abandoned
 in-progress row ages out on the same clock as a finished one; keying on
@@ -43,13 +51,24 @@ from __future__ import annotations
 import sqlite3
 import threading
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import FrozenSet, Optional
 
-from gap_kernel._time import utcnow
+from gap_kernel._time import ensure_utc, utcnow
 
 STATUS_IN_PROGRESS = "in_progress"
 STATUS_COMPLETE = "complete"
+# A settled failure. Distinct from IN_PROGRESS because "an attempt failed and
+# may be retried" and "an attempt is running right now" must not look alike: if
+# they do, concurrent presentations of one authorization all resume the same row
+# and all dispatch, and single-use holds only for sequential callers.
+STATUS_FAILED = "failed"
+
+# How long an IN_PROGRESS claim is presumed live. Within it, a second claim is a
+# concurrent replay and is refused. Beyond it, the executing process is presumed
+# dead and the row becomes resumable, so a crash mid-dispatch does not strand the
+# authorization forever.
+DEFAULT_LEASE_SECONDS = 300
 
 # Default retention for pruning. Comfortably longer than any decision TTL, so a
 # still-valid decision always has a row to be refused against.
@@ -80,9 +99,11 @@ class ExecutionLedger:
         self,
         db_path: str = ":memory:",
         retention_seconds: int = DEFAULT_RETENTION_SECONDS,
+        lease_seconds: int = DEFAULT_LEASE_SECONDS,
     ):
         self.db_path = db_path
         self.retention_seconds = retention_seconds
+        self.lease_seconds = lease_seconds
         # begin() is a read-modify-write across two statements, and a fabric may
         # be driven from several threads. The lock plus BEGIN IMMEDIATE makes the
         # claim atomic — otherwise two concurrent replays could both see "not yet
@@ -174,6 +195,15 @@ class ExecutionLedger:
                         f"{row['decision_id']} / proposal {row['proposal_id']}, not to "
                         f"decision {decision_id} / proposal {proposal_id}."
                     )
+                elif (
+                    row["status"] == STATUS_IN_PROGRESS
+                    and not self._lease_expired(row["last_attempt_at"])
+                ):
+                    raise ExecutionReplayError(
+                        f"Execution nonce '{nonce}' (decision {row['decision_id']}) is "
+                        f"already in flight; the authorization is single-use and cannot "
+                        f"be presented concurrently."
+                    )
                 else:
                     self._conn.execute(
                         "UPDATE executions SET attempts = attempts + 1, "
@@ -195,12 +225,29 @@ class ExecutionLedger:
             self._conn.execute("COMMIT")
             return result
 
+    def _lease_expired(self, last_attempt_at: Optional[str]) -> bool:
+        """True if an IN_PROGRESS claim is old enough to presume its owner died.
+
+        A missing or unparseable stamp is treated as still-live: refusing a
+        concurrent claim is the fail-closed answer, since the alternative is
+        letting one authorization dispatch twice.
+        """
+        if not last_attempt_at:
+            return False
+        try:
+            started = ensure_utc(datetime.fromisoformat(last_attempt_at))
+        except (ValueError, TypeError):
+            return False
+        return (utcnow() - started).total_seconds() > self.lease_seconds
+
     def finish(self, nonce: str, success: bool) -> None:
         """Settle an execution.
 
         On success the row becomes COMPLETE and no further ``begin`` succeeds.
-        On failure the row stays IN_PROGRESS — RESUMABLE — with ``last_attempt_at``
-        stamped, so a transient failure does not burn the authorization.
+        On failure it becomes FAILED — settled and resumable — with
+        ``last_attempt_at`` stamped, so a transient failure does not burn the
+        authorization while an attempt still in flight stays distinguishable
+        from one that has stopped.
         """
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -216,7 +263,7 @@ class ExecutionLedger:
                     updated = self._conn.execute(
                         "UPDATE executions SET status = ?, last_attempt_at = ? "
                         "WHERE nonce = ?",
-                        (STATUS_IN_PROGRESS, now, nonce),
+                        (STATUS_FAILED, now, nonce),
                     ).rowcount
                 if not updated:
                     raise ExecutionReplayError(

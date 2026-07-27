@@ -5,6 +5,12 @@ load-bearing invariant: it FAILS CLOSED, never FAILS CRASHED. Arbitrary action
 parameters, constraint thresholds, and observation streams must never raise an
 uncaught exception out of the kernel or the monitors — a class of bug
 (crash-on-malformed-input) that example-based tests miss.
+
+Robustness is only half of it: returning *a* verdict is not returning the RIGHT
+one, and nothing here would notice a kernel that approved everything. The
+enforcement-semantic half — a violated HARD constraint is never approved, no
+authorization is granted below its own floor, a governed decision always carries
+its single-use binding — lives in :mod:`tests.test_enforcement_properties`.
 """
 
 from datetime import datetime, timedelta

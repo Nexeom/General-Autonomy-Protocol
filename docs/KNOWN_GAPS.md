@@ -22,6 +22,19 @@ signature verification, is not a defect that can be closed in this
 architecture; it is [Threat Model §4](THREAT_MODEL.md) and the honest partial
 in the isolation row of the conformance matrix.
 
+Two of those fixes did not hold on the first attempt, which is worth recording
+rather than smoothing over. Attestation covered the store's own write paths but
+not the Execution Fabric's result write-back, so an agent could still launder
+its own consent in one approved step; a direct write to a governance-relevant
+property now revokes its attested standing wherever the write comes from.
+Single-use covered sequential presentation but not concurrent: an in-progress
+row was resumable, so eight threads presenting one authorization all dispatched.
+A settled-failure state plus an in-flight lease separates "an attempt failed"
+from "an attempt is running". Both are pinned in
+`tests/test_bypass_regressions.py`. Both were found by writing adversarial tests
+against code that had just been hardened — the fix and the test for the fix are
+not the same work.
+
 ## Architectural
 
 **A1. Signature verification runs in the agent's process.**
