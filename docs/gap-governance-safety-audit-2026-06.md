@@ -1,6 +1,18 @@
 # GENERAL AUTONOMY PROTOCOL — POST-REMEDIATION RE-AUDIT
-## Independent Re-Assessment After the Remediation Program
+## Self Re-Assessment After the Remediation Program
 ## June 2026
+
+> ⚠️ **Self-audit.** Like the [March baseline](gap-governance-safety-audit-2026-03.md),
+> this re-audit was run inside the project against its own code. No external
+> party audited GAP or reviewed this document. Where the text below says a
+> finding was "adversarially verified" or "independently adversarially
+> verified", that means a *separate adversarial pass by the project* tried to
+> break the score — a real and useful discipline, but not third-party assurance.
+> Earlier revisions called this an "independent re-assessment"; that was an
+> overstatement and has been corrected.
+>
+> The substance stands: the re-scores are grounded in code and tests, and the
+> program they document is real. Do not cite this as external validation.
 
 ---
 
@@ -11,7 +23,7 @@
 | **Re-audit date** | June 2026 |
 | **Scope** | Current `main` (remediation PRs #4–#8 + composed-system fixes) — `gap_kernel/`, `tests/` (216 passing), `docs/CONFORMANCE.md` |
 | **Baseline** | [`gap-governance-safety-audit-2026-03.md`](gap-governance-safety-audit-2026-03.md) (this document updates it; the baseline remains the historical record) |
-| **Method** | Each March finding (G-1…G-4, SA-1…SA-5) was independently re-scored against the current code, and a cross-system review (end-to-end fail-closed coherence, cross-module cryptographic consistency, contract/conformance accuracy) was run. Every reassessment and finding was adversarially verified. |
+| **Method** | Each March finding (G-1…G-4, SA-1…SA-5) was re-scored against the current code, and a cross-system review (end-to-end fail-closed coherence, cross-module cryptographic consistency, contract/conformance accuracy) was run. Every reassessment and finding was then challenged by a second adversarial pass **within the project** — not by an external reviewer. |
 | **Verdict** | Calibration gap largely closed; load-bearing mechanisms built and adversarially verified; remaining gaps are honestly scoped (deployment-gated or deferred). |
 
 ---
@@ -69,7 +81,7 @@ addressed** · **Unchanged**. Every row was adversarially verified against sourc
 
 | # | March finding (condensed) | Now | What changed | Residual (honest) |
 |---|---|---|---|---|
-| **G-1** | "Structurally incapable of violating law" overstated | Partially addressed | Signed, always-active, fail-closed Tier-1 floor is real (`governance/profile.py`, `kernel.py`, `test_tier_enforcement.py`). | A signature proves authorship, **not legal correctness**; only 3 of 8 regulatory categories have concrete evaluators; and the normative spec still answers "can this violate law?" with an unqualified "No" (the *Conformance* doc is calibrated; the spec is gated by its normative-vs-implemented disclaimer). |
+| **G-1** | "Structurally incapable of violating law" overstated | Partially addressed | Signed, always-active, fail-closed Tier-1 floor is real (`governance/profile.py`, `kernel.py`, `test_tier_enforcement.py`). | A signature proves authorship, **not legal correctness**; only 2 of 8 regulatory categories have concrete evaluators (Cat 1 data privacy, Cat 2 communications — the third evaluator, `cost_ceiling`, is a budget check belonging to no regulatory category); and the normative spec still answers "can this violate law?" with an unqualified "No" (the *Conformance* doc is calibrated; the spec is gated by its normative-vs-implemented disclaimer). |
 | **G-2** | Structural enforcement gap (in-process, importable kernel) | Substantially addressed | Real out-of-process boundary (`SubprocessGovernanceClient` + `service/kernel_server.py`) + unforgeable kernel-signed decisions verified fail-closed (`test_kernel_service.py`, `test_decision_integrity.py`). | The boundary is **opt-in**: the live FastAPI app and reconciler still instantiate the in-process kernel, where `_signing_key_hex`/`_dynamic_risk_engine`/`_action_type_registry` remain reflection-reachable. Default deployments do not get process isolation. |
 | **G-3** | Who governs the governor (monitor independence soft) | Partially addressed | A **model-free, rule-based** GIM (drift + decomposition) sidesteps the same-model correlated-blind-spot scenario (`integrity_monitor.py`, `test_gim.py`). | Independence is unenforced: the monitor is an in-process object owned by the loop it watches, with no separate key/process and no human-only reporting channel; the different-model re-classifier (GIM-2) is deferred. |
 | **G-4** | Human-in-the-loop scalable-oversight weaknesses | Partially addressed | Real Ed25519 L2+ OOB gate (signature, freshness, registered key, per-approver ceiling, persistent replay) + **proposal-content binding** (this re-audit) closes the content-substitution channel. | Framing bias and **system-generated approval summaries** are unaddressed — there is no agent-independent rendering channel; rubber-stamping is mitigated only by cryptographic friction, not behavioral control. |
@@ -83,8 +95,9 @@ addressed** · **Unchanged**. Every row was adversarially verified against sourc
 
 ## CROSS-SYSTEM REVIEW
 
-Reviewing the *integrated* system (not per-module) surfaced **7 confirmed** issues
-the narrow per-PR reviews could not. Fixed in this re-audit:
+Reviewing the *integrated* system (not per-module) surfaced **6 confirmed** issues
+the narrow per-PR reviews could not. Fixed in this re-audit (the last bullet
+covers two):
 
 - **Content-substitution (G-4, medium):** a decision bound only `proposal.id`; a
   same-id proposal with mutated actions could execute under it. The kernel now
@@ -99,9 +112,14 @@ the narrow per-PR reviews could not. Fixed in this re-audit:
 - **Domain separation (low):** all five signed payloads (decision, OOB, lineage,
   profile, SIR seal) now carry a `_domain` tag — cross-protocol confusion
   resistance, no longer reliant on incidental structural divergence.
-- **Contract hygiene (low):** `GovernanceClient` now threads `current_time`
-  (drop-in parity with the kernel); `SubprocessGovernanceClient` gained a
-  defensive `__del__`.
+- **Contract hygiene (low, two issues):** `GovernanceClient` now threads
+  `current_time` (drop-in parity with the kernel); `SubprocessGovernanceClient`
+  gained a defensive `__del__`. **Since superseded:** the `current_time` half was
+  deliberately reversed by a later security fix — a governed kernel now reads its
+  own clock and *ignores* any caller-supplied `current_time`, and the RPC no
+  longer carries the field at all, because letting the governed system name the
+  evaluation time lets it choose which scheduled constraints are active
+  (`kernel._resolve_time`).
 
 Documented as residual (not a code bug): the SIR readiness gate is **opt-in** and
 not wired into the shipped reconciler/REST pipeline — recorded in `CONFORMANCE.md`.
@@ -227,7 +245,7 @@ findings above:
 |---|---|---|
 | **Default process isolation** | #17 | **G-2** — the out-of-process boundary is now the *default* for the governed path (`build_governed_deployment` / `create_app` run the kernel, with its signing key, in a child process by default; `isolated=False` opt-out). The prior G-2 residual was specifically "the boundary is opt-in / the live app uses the in-process kernel." |
 | **Self-evolution capability-gain monitor** | #18 | **SA-4** — the "self-evolution capability-gain has no dynamic monitor" sub-gap is closed: `SelfEvolutionMonitor` (velocity / privilege-accrual / surface) holds a self-modification consequentially when the agent is in a flagged pattern, over *realized* modifications. |
-| **Regulatory-category evaluators** | #19 | **G-1 / SA-5** — concrete evaluators now cover **7 of 8** categories (was 3): transparency, anti-discrimination, financial AML, healthcare minimum-necessary, safety — each a structural gate with per-category adversarial tests, narrowing the floor's coverage gap. |
+| **Regulatory-category evaluators** | #19 | **G-1 / SA-5** — concrete evaluators now cover **7 of 8** categories (was **2**): transparency, anti-discrimination, financial AML, healthcare minimum-necessary, safety — each a structural gate with per-category adversarial tests, narrowing the floor's coverage gap. |
 
 Each review surfaced and fixed real defects before merge — most notably: the
 isolation client leaked a temp file on a failed spawn (now deterministic cleanup);
@@ -299,3 +317,48 @@ against the audit**: 0 Resolved reflects not unfinished work but the honest limi
 of what code alone can guarantee about law, model independence, unsupervised
 high-consequence safety, and physical isolation — the four places where "Resolved"
 would itself be the overstatement the original audit warned against.
+
+---
+
+## POSTSCRIPT — state of the repository since this document was written
+
+Everything above is a dated snapshot and is left unedited as a record. Two
+things about it are no longer accurate, and one of its conclusions did not hold.
+
+**Counts are stale.** This document reports suites of 216, 283, 336 and 381
+tests at successive points, and ~89–90% line coverage. The suite is now **550
+tests passing** at **93% line coverage**, with a 90% floor enforced in CI across
+Python 3.11/3.12/3.13 on Linux and 3.13 on Windows.
+
+**"Complete for everything implementable in-repo" did not hold.** A subsequent
+two-pass adversarial review raised 141 issues, and five further waves of security
+fixes landed — including defects in mechanisms this document had already scored
+as built and verified. Among them: a single signed L0 decision could be executed
+four times (now single-use at every level via a nonce, expiry and an
+`ExecutionLedger`); concurrent RPC evaluations could cross responses; a governed
+kernel accepted a caller-supplied evaluation clock; runtime `register_action_type`
+could rewrite the governed registry; concurrent lineage appends were silently
+dropped; one malformed entity killed the reconciler heartbeat permanently and
+silently; the strategy generator could launder state through a shared world
+model; and governance-relevant world-model properties (consent, geography) were
+trusted as unattested telemetry, which made a reproducible consent-flip and
+geo-rewrite exploit possible. All are closed. The lesson is the one this audit
+kept restating and then set aside in its own verdict: an internal review
+declaring itself finished is evidence about the review, not about the code.
+
+**What remains untrue, plainly.** The agent process still holds the
+`ExecutionFabric` that verifies decision signatures, the executor registry with
+its tool credentials, the kill switch, the world model, and the lineage store —
+so an adversary with code execution in the agent process can still bypass
+verification without forging anything. The out-of-process kernel boundary
+protects the *signing key and the registry*, not the *enforcement point*. GIM-5
+is unfed and GIM-2/GIM-4 depend on deployment-supplied telemetry, so "five
+independent detectors" overstates what runs. The independent authorization
+classifier is a keyword heuristic and is defeated by renaming an action. The
+lineage chain is still signed by the process that owns the database, with the
+anchor in the same SQLite file and no external witness. SIR's
+`declared_boundaries` is captured and never enforced, and `verify_seal` has no
+callers. `DynamicRiskEngine`'s feed methods are never called on any shipped path.
+Decisions signed under the v1 domain tag no longer verify and nothing migrates
+them. And there is still **no external security review, no adopter, and no tagged
+release**.

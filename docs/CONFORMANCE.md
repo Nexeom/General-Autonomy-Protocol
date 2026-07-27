@@ -1,103 +1,168 @@
 # GAP Conformance & Maturity Statement
 
 This document is the single source of truth for **what the GAP reference
-implementation actually enforces and verifies today**, versus what the
-specification states as a normative requirement. It exists because the audit's
-top finding was a *calibration gap*: the spec's certainty ("cannot",
-"structurally incapable", "immutable") exceeded what the artifact delivered. A
-deployer must be able to tell a built-and-tested guarantee from an aspiration.
+implementation actually enforces today**, versus what the
+[specification](PROTOCOL_SPECIFICATION.md) states as a normative requirement.
 
-**Read the [protocol specification](PROTOCOL_SPECIFICATION.md) as the normative
-standard. Read this matrix for the implementation's earned status.**
+It exists because the project's own top audit finding was a *calibration gap*:
+the specification's certainty ("cannot", "structurally incapable", "immutable")
+exceeded what the artifact delivered. A deployer must be able to tell a
+built-and-tested guarantee from an aspiration.
+
+**Read the specification as the normative standard. Read this matrix for the
+implementation's earned status.** Where the README and this document disagree,
+this document wins.
+
+For the adversary this implementation does and does not defend against, read
+the [Threat Model](THREAT_MODEL.md). For what is known-broken right now, read
+[KNOWN_GAPS.md](KNOWN_GAPS.md).
 
 ## Status legend
 
 | Status | Meaning |
 |---|---|
-| ✅ **Implemented & Verified** | Enforced in code and covered by passing tests (including adversarial tests where the claim is a safety property). |
-| 🟡 **Partial** | A real, working mechanism exists but the full normative requirement is not yet met; the gap is stated. |
-| 📋 **Normative / Planned** | A specified requirement not yet implemented, or a property delivered by deployment topology rather than this codebase. |
+| ✅ **Enforced** | Enforced in code on the shipped governed path, covered by passing tests including adversarial ones where the claim is a safety property. |
+| 🟡 **Partial** | A real, working mechanism exists but does not meet the full normative requirement. The gap is stated in the row. |
+| ⚪ **Built, unfed** | The mechanism is implemented and unit-tested, but nothing on the shipped path supplies its input, so it does not fire in a default deployment. |
+| 🔧 **Deployment-configured** | Delivered by deployment topology, not by this codebase. The code provides the seam; the deployer provides the guarantee. |
+| 📋 **Normative / Planned** | Specified but not implemented. |
 
-## Matrix
+Baseline: **550 tests**, 93% line coverage, CI-enforced 90% floor, on Python
+3.11–3.13 (Linux) and 3.13 (Windows).
 
-| Capability / Claim | Status | Evidence (impl → tests) |
+---
+
+## Kernel evaluation
+
+| Capability / Claim | Status | Evidence |
 |---|---|---|
-| **Fail-closed evaluation** — an unrecognized constraint or unhandled category is treated as a violation, never silently allowed (Fix 1 / SA-2) | ✅ Implemented & Verified | `governance/kernel.py` (`_check_constraint_violation`, `_CONSTRAINT_EVALUATORS`) → `tests/test_fail_closed.py` |
-| **Strict action typing** — a missing/unregistered `action_type_id` is rejected (Fix 1) | ✅ Implemented & Verified | `governance/kernel.py` (`strict_action_typing`, auto-on under a profile) → `tests/test_fail_closed.py` |
-| **Temporal authority fails closed** — a malformed schedule does not silently disable a constraint | ✅ Implemented & Verified | `governance/kernel.py` (`_is_constraint_active`) → `tests/test_fail_closed.py` |
-| **Unforgeable decisions** — every decision is kernel-signed; the fabric refuses unsigned/forged/tampered decisions (Fix 2) | ✅ Implemented & Verified | `governance/kernel.py` (`_sign_decision`), `execution/fabric.py` (`_verify_decision_signature`) → `tests/test_decision_integrity.py` |
-| **Process isolation of the kernel** — the kernel runs out-of-process behind a constrained API; the agent holds only a client (public key + request channel) | ✅ Implemented & Verified | Genuine boundary: `client/governance_client.py` **SubprocessGovernanceClient** (kernel — with private key + registry — in a separate OS process; the agent holds only the public key + a stdio channel) + `service/kernel_server.py` → `tests/test_kernel_service.py` (real subprocess boundary). **Now the default for the governed path:** `build_governed_deployment(isolated=True)` and `create_app(isolated=True)` run the governed kernel out of process by default — the signed profile + public-key registry cross via a temp file, the child re-verifies the signature and **fails closed on tamper**, and the client is a complete drop-in (evaluate + public key + action-type registry). `isolated=False` is an explicit in-process opt-out for embedding/tests. The `InProcessGovernanceClient` is a same-process **convenience, not** an isolation boundary (documented as such). Hardware/OS-sandbox isolation of the subprocess remains a deployment concern. |
-| **Policy Tier 1 regulatory floor** — loaded from a signed, runtime-immutable Applicability Profile; always active; cannot be weakened by lower tiers (Fix 3) | ✅ Implemented & Verified | `governance/profile.py`, `governance/kernel.py` (`_tier1_floor`) → `tests/test_tier_enforcement.py` |
-| **Regulatory Constraint Category evaluators** — concrete checks for **all 8** spec categories: data privacy (Cat 1), communications (Cat 2), transparency / AI-interaction disclosure (Cat 3), anti-discrimination / fairness gate (Cat 4), financial / AML+sanctions (Cat 5), healthcare / minimum-necessary PHI (Cat 6), safety boundary (Cat 7), IP/content risk + provenance (Cat 8) | 🟡 Partial | `governance/kernel.py` (`_CONSTRAINT_EVALUATORS`) → `tests/test_regulatory_categories.py` (per-category violation + compliant cases). **Honestly scoped — STRUCTURAL gates, not legal adjudication:** each evaluator checks that the required structural element is *present and declared* on the action (e.g. a fairness evaluation was performed, AML+sanctions screening ran, AI disclosure occurred, PHI access is justified, the safety boundary is respected) — it verifies the **gate**, trusting the (domain-specific) Strategy Layer to populate the metadata truthfully; it does **not** adjudicate whether the fairness result *passed*, whether a disclosure was *adequate*, or whether content infringes. Jurisdiction-specific content within each category is deployment-configured. Numeric thresholds (AML floor, PHI record cap) are read from a **structured `Constraint.threshold` field**, never guessed from the free-text description (so a statutory citation like "45 CFR 164.514" is not mistaken for a threshold); a present-but-malformed amount / record count **fails closed**; the AML gate recognizes a financial transaction only via the declared `transaction_amount` (the Action Type Registry is the primary governed gate on financial action types). An unrecognized constraint still fails closed. |
-| **Authorization comparator** — rank-based `granted ≥ required` | ✅ Implemented & Verified | `governance/kernel.py` (`_satisfies_auth`/`_max_auth`) → `tests/test_tier_enforcement.py` |
-| **Out-of-Band Authority Verification** — a human approval signature over the Decision Record id+expiry, verified against a registered key, consumed in a persistent replay ledger (Fix 4) | ✅ Implemented & Verified | `execution/fabric.py`, `crypto/signing.py`, `verification/oob_ledger.py` → `tests/test_oob_verification.py` |
-| **L2+ approval gating** — L2+ decisions are not auto-executed; execution requires an attached human approval (Fix 4 supply side) | ✅ Implemented & Verified | `strategy/cga_loop.py` (`approve_and_execute`) → `tests/test_approval_gating.py` |
-| **Tamper-evident decision lineage** — Ed25519-signed, hash-chained; tampering is detected and cannot be re-sealed without the lineage key (Fix 5) | ✅ Implemented & Verified | `lineage/store.py` → `tests/test_lineage.py` (incl. tamper / recompute-forgery / broken-link) |
-| **Governance Integrity Monitoring** — all five signal classes as independent, deterministic rule-based detectors: GIM-1 (authorization drift), GIM-2 (audit-behavior divergence), GIM-3 (threshold-avoidance decomposition), GIM-4 (escalation framing bias), GIM-5 (adversarial collapse) (Fix 6 + rec #4) | 🟡 Partial | `governance/integrity_monitor.py` → `tests/test_gim.py`. GIM-1/GIM-3 are wired into the CGA loop so every decision is observed and signals surface on the result; in **governed mode the loop holds and escalates** an action GIM-1/3 flags (`block_on_integrity`), making them consequential rather than advisory (`tests/test_integration.py`). This is wired onto the **shipped autonomous path**: a governed `create_app` / `ReconcilerLoop` runs the heartbeat with one shared, bounded monitor and `block_on_integrity` on, so a held action is recorded in lineage and routed to a human via `open_escalations` / `GET /escalations/open` (and is resolvable — not a dead letter) (`tests/test_reconciler.py`). GIM-3 detection is **recency-relative** (a burst self-clears once it ages past the window, so a target is never held forever) and the monitor's observation stores are **count-bounded** (`max_history`); a held target counts toward the reconciler's circuit breaker and is not re-queued every cycle. Note GIM-3 currently counts sub-threshold **repetition** within a window (not the spec's composite-vs-sub-task authorization *gap*), so `decomposition_max_level` should sit at/below the reconciler's base action level to avoid flagging routine repeated correction; observation timestamps are wall-clock, so on a simulated clock a deployment should thread logical time. GIM-2/GIM-4/GIM-5 compute the spec's alert math over telemetry the **deployment supplies** (audit mode, escalation framing, challenger outcomes) — the detectors and thresholds are built and tested, but the telemetry feed and the consequential wiring are deployment-side. GIM-2 compares the authorization-classification **distribution** (total-variation distance, catching a mean-preserving shift), mean rank, and escalation rate; GIM-5 enforces the spec's **two-consecutive-period** debounce. **GIM-4 is now fed on the shipped path** (G-4): a deployment records how it framed an escalation's options (`reconciler.attach_escalation_framing`) and the human's choice flows in at resolution (`resolve_escalation(..., chosen_option_id=)` / `POST /escalations/{id}/resolve`), so escalation-framing bias is measured from real human decisions and surfaced via `reconciler.escalation_framing_bias()` / `GET /reconciler/framing-bias` (the framing scores themselves are deployment-declared). **Honestly scoped:** the spec's *independent-model* evaluator for GIM-1/GIM-2 (a different model re-classifying the same inputs) and GIM-2's trace-completeness / challenge-rate metrics remain **Normative / Planned**; what is implemented is the metric math, thresholds, and alerting fed by whatever evaluator the deployment wires in. |
-| **Default-safe governed deployment** — a fail-closed posture that REQUIRES the industry-specific regulatory floor and forces on the universal primitives (kernel-signature verification, strict action typing, the SIR gate, a corrigibility kill-switch) | ✅ Implemented & Verified | `governance/deployment.py` `build_governed_deployment()` + `governed=True` on the kernel and loop → `tests/test_deployment.py`. The floor's *content* is industry-specific (deployment config); *requiring* one is universal (enforced — refuses to run without it). The open/prototype constructors remain permissive by design. |
-| **Corrigibility / kill-switch** — a human-engaged switch halts the system: the Execution Fabric refuses to dispatch (raising `KillSwitchEngaged`, fail closed, checked first) and the CGA loop refuses to plan, returning a clean `halted` result; CGA does **not** re-plan a path around a halt, including by retargeting. Scoped global or per-entity, and wired through GAP's autonomous heartbeat — the `ReconcilerLoop` and the REST API share one switch (`app.state.kill_switch`) across the loop and fabric (SA-4) | 🟡 Partial | `governance/corrigibility.py` (`KillSwitch`), `execution/fabric.py` (halt check + `KillSwitchEngaged`), `strategy/cga_loop.py` (scope-aware halt, no-retarget), `reconciler/loop.py` + `api/app.py` (shared switch) → `tests/test_corrigibility.py`. **Honestly scoped:** the engage/disengage actor is a free-text label, **not** cryptographically authenticated, and the audit log is in-memory (production binds an operator identity and persists/append-only-signs the log). The structural property — the strategy layer holds no reference to the switch and cannot disengage it — *is* verified. Corrigibility propagation across a sub-agent delegation tree is covered by the multi-agent surface row below. |
-| **Multi-agent / sub-agent governance** — delegation cannot amplify authority (a sub-agent's authorization ceiling is rank-bounded by its parent, monotone non-increasing; registering above the parent fails closed), constraints propagate downward and only accumulate, a halt propagates to the whole subtree, and threshold-avoidance decomposition is detected across ≥2 agents (rec #4) | 🟡 Partial | `governance/multi_agent.py` (`SubAgentRegistry`) → `tests/test_multi_agent.py`. A live **`SubAgentExecutor`** (`execution/sub_agent_executor.py`) **enforces** the bounds at dispatch: it refuses (fail closed) a sub-agent action when the agent/an ancestor/the system is halted, refuses an action above the agent's ceiling (delegation cannot amplify — the sub-agent must escalate), and records realized actions for cross-agent decomposition (`tests/test_sub_agent_executor.py`). **Honestly scoped:** the registry + executor enforce the invariants for any sub-agent routed through them; wiring a *particular* multi-agent orchestrator to route every sub-agent through this executor is deployment-side, and the single-process delegation tree is in-memory (a distributed sub-agent fabric is **Normative / Planned**). |
-| **Self-evolution capability-gain monitoring** — a dynamic monitor over the agent's *realized* self-modifications: SE-VELOCITY (burst of self-modifications), SE-PRIVILEGE (self-modification authorization trending upward — the agent granting itself more privilege), SE-SURFACE (breadth of distinct capabilities modified) (SA-4) | 🟡 Partial | `governance/self_evolution.py` (`SelfEvolutionMonitor`) → `tests/test_self_evolution.py`. Wired **consequentially**: the CGA loop feeds it a self-modification only once that modification has actually **executed** (an approved-but-awaiting-OOB or escalated self-mod gains no capability and is not counted), and under `block_on_integrity` an agent already in a flagged pattern has its next self-modification **held** (`integrity_hold`). Velocity/surface are recency-relative (self-clearing); state is count-bounded; privilege uses GIM-1's drift idiom. Defaulted on in `build_governed_deployment` / governed `create_app` / `ReconcilerLoop`. **Honestly scoped:** deterministic over self-modification *metadata*, not a semantic capability measurement (a model-level capability eval is **Normative / Planned**); on the shipped governed reconciler path the hold is **dormant unless a self-modifying strategy generator is wired** (the default `RuleBasedStrategyGenerator` never emits `skill_modification`). |
-| **Independent authorization review** — a SEPARATE evaluator re-classifies each operation's required authorization level (independent of the kernel's Action Type Registry logic) and flags where the system **under-classified** — a severe single operation (system under-rated by ≥ the gap, e.g. system L0 vs independent L3/L4) or sustained drift below an independent baseline (G-3, GIM-1/2 independence axis) | 🟡 Partial | `governance/independent_review.py` (`IndependentAuthorizationMonitor`, `RuleBasedIndependentClassifier`) → `tests/test_independent_review.py`. The reference classifier gives **logic** independence (a different algorithm — risk signals, not the registry — so it can't inherit the kernel's blind spots); a model-backed classifier (a genuinely different *model* re-rating the same inputs) is the pluggable adapter point and remains **Normative / Planned**. Running the monitor out-of-process with its own key and a human-only reporting channel is a deployment topology (the same isolation concern as the kernel boundary), not wired here. |
-| **CGA cannot negotiate around a hard constraint** — re-plan within bounds or escalate, never bypass (SA-1 / SA-5) | ✅ Implemented & Verified | `strategy/cga_loop.py` → `tests/test_adversarial.py` |
-| **Structured Uncertainty / Decision Records** | ✅ Implemented & Verified | `models/governance.py`, `governance/kernel.py` → `tests/test_spec_20260220.py` |
-| **Reconciler Tiers 1–3** (ML / cognitive / adversarial observation) | 📋 Normative / Planned | Tier 0 (rule-based) implemented; Tiers 1–3 reserved for production. |
-| **Structured Intent Resolution (SIR)** | 🟡 Partial | `governance/sir.py`, `models/sir.py` → `tests/test_sir.py`. SIR-1 (five-component declaration), SIR-3 (proportional resolution + readiness gate), SIR-4 (cryptographic seal + decision link), SIR-5 (governed standing declarations: human-authored, expiring) implemented and wired into the CGA loop as an opt-in readiness gate — the loop will not engage until the intent is confirmed/corrected (L1+) or backed by a valid standing declaration (L0) (`tests/test_integration.py`). **Note:** the shipped `ReconcilerLoop` and REST API run the CGA loop *without* the SIR gate (opt-in). SIR-2 meta-intent inference is now a real **rule-based** inference (`infer_meta_intent`) — risk tolerance, value hierarchy, and stakeholders are derived from the stated intent via deterministic keyword heuristics (`tests/test_sir_meta_intent.py`), and the inferred meta-intent is surfaced for the human to **confirm/correct** (advisory, not a gate); a model-based inferencer remains the pluggable, richer **Normative / Planned** alternative. |
+| **Fail-closed evaluation** — an unrecognized constraint or unhandled category is a violation, never a silent pass | ✅ Enforced | `governance/kernel.py` (`_check_constraint_violation`, `_CONSTRAINT_EVALUATORS`) → `tests/test_fail_closed.py` |
+| **Strict action typing** — a missing or unregistered `action_type_id` is rejected | ✅ Enforced | `governance/kernel.py` (`strict_action_typing`, auto-on under a profile) → `tests/test_fail_closed.py` |
+| **The kernel owns its clock** — a caller-supplied `current_time` cannot deactivate a schedule-gated constraint | ✅ Enforced | A governed kernel ignores the parameter and reads `utcnow()` (`_resolve_time`); the RPC no longer carries it at all. Previously an agent could name a time outside a cron window, drop the constraint from `_get_active_constraints`, and receive a genuinely kernel-signed approval backdated a year. → `tests/test_registry_integrity.py`, `tests/test_boundary_hardening.py` |
+| **Temporal authority fails closed** — a malformed schedule does not silently disable a constraint | ✅ Enforced | `governance/kernel.py` (`_is_constraint_active`) → `tests/test_fail_closed.py` |
+| **World-model-backed constraints fail closed on an untracked target** | ✅ Enforced | The GDPR and contact-hours gates branched on `if entity:` with no else, and the agent authors `action.target` — so it chose whether the gate had anything to evaluate. Untracked targets are now a violation in governed mode (`allow_untracked_targets`, default False when governed). → `tests/test_registry_integrity.py` |
+| **Governance-relevant evidence must be attested** | ✅ Enforced | The world model is what the constraint evaluators read, and `POST /world/ingest` accepted arbitrary properties unauthenticated: re-ingesting an entity with `gdpr_consent: true` turned a rejected proposal into a kernel-signed approval, and rewriting `geo` to `US` skipped the EU branch entirely. `gdpr_consent`, `geo`, `jurisdiction` and `local_hour` now carry store-stamped provenance; a governed kernel treats an unattested value as unevaluable, which is a violation. Attested consent still approves — this is a trust model, not a blanket refusal. → `tests/test_world_model_trust.py` |
+| **Authorization comparator** — rank-based `granted ≥ required` | ✅ Enforced | `governance/kernel.py` (`_satisfies_auth`/`_max_auth`) → `tests/test_tier_enforcement.py` |
+| **Policy Tier 1 regulatory floor** — loaded from a signed, runtime-immutable Applicability Profile, always active, not weakenable by lower tiers | ✅ Enforced | `governance/profile.py`, `governance/kernel.py` (`_tier1_floor`) → `tests/test_tier_enforcement.py`. The floor's *content* is deployment-specific; *requiring* one is enforced. |
+| **Regulatory Constraint Category evaluators** — all 8 spec categories | 🟡 Partial | `governance/kernel.py` (`_CONSTRAINT_EVALUATORS`, 9 entries covering 8 categories plus a cost ceiling) → `tests/test_regulatory_categories.py`. **Honestly scoped — these are STRUCTURAL gates, not legal adjudication.** Each evaluator checks that a required element is present and declared (a fairness evaluation was performed, AML/sanctions screening ran, AI disclosure occurred, PHI access is justified). It does not adjudicate whether the fairness result *passed*, whether a disclosure was *adequate*, or whether content infringes. Numeric thresholds come from the structured `Constraint.threshold` field, never parsed from free text; a present-but-malformed value fails closed. |
+| **Structured Uncertainty / Decision Records** | ✅ Enforced | `models/governance.py`, `governance/kernel.py` → `tests/test_spec_20260220.py` |
+| **Multi-Phase Authorization** — authorizing intent does not pre-authorize outcome | ✅ Enforced | `governance/kernel.py` (`evaluate_phase`) → `tests/test_spec_20260220.py` |
+| **Intent-conflict detection** | 🟡 Partial | `_detect_intent_conflicts` probes other intents' hard constraints against a synthetic **empty** `WorldModel`, so it deliberately keeps the permissive posture rather than reporting a conflict for every world-model-backed constraint. The authoritative evaluation is the real one in `_evaluate`. `resolve_intent_conflict` returns `hard_constraints_preserved: True` unconditionally — an assertion, not a verified invariant, and it is written into the lineage record. |
 
-## Summary
+## Registry integrity
 
-As of this revision the reference implementation **earns** the core structural
-claims it makes for fail-closed evaluation, unforgeable decisions, a signed
-immutable regulatory floor, real cryptographic OOB verification with approval
-gating, tamper-evident lineage, and non-negotiable hard constraints — each
-backed by adversarial tests. The remaining items above are explicitly marked
-*Partial* or *Normative/Planned* so no deployer mistakes aspiration for
-assurance. The test suite is the live evidence; this matrix is updated as each
-phase lands.
+| Capability / Claim | Status | Evidence |
+|---|---|---|
+| **The Action Type Registry is governance configuration, not runtime state** | ✅ Enforced | `register_action_type` carried the docstring "autonomous systems cannot register new types" and performed no check — a bare dict write that could silently **overwrite** a baseline type, so re-registering `skill_modification` at L0 stripped its L2 approval gate. The registry now rides inside the signed `ApplicabilityProfile`, so it crosses the process boundary signed and fails closed on tamper. A governed kernel refuses runtime registration outright; open mode is a monotonic ratchet that cannot replace a type or register below the risk-derived floor. → `tests/test_registry_integrity.py` |
+| **No governance-mutation surface on the RPC boundary or over HTTP** | ✅ Enforced | The `register_action_type` RPC branch, both client proxies, and `POST /governance/action-types` are **deleted**. The boundary exposes `evaluate`, `get_public_key`, `list_action_types`, `get_action_type` — reads only. → `tests/test_boundary_hardening.py` |
+| **Curated risk metadata is consequential** | 🟡 Partial | `RiskProfile` on an action type informs the risk-derived floor used by the registration ratchet. It is not yet a floor on every evaluation path. |
 
-## Security review (June 2026)
+## Decision integrity and execution
 
-An adversarial review of this remediation code confirmed 14 defects, all since
-fixed and regression-tested:
+| Capability / Claim | Status | Evidence |
+|---|---|---|
+| **Unforgeable decisions** — every decision is kernel-signed; the fabric refuses unsigned, forged or tampered decisions | ✅ Enforced | `governance/kernel.py` (`_sign_decision`), `execution/fabric.py` (`_verify_decision_signature`) → `tests/test_decision_integrity.py`. Which key signed is now **inside** the signed payload (`kernel_public_key_id` left the exclusion set); domain tag `gap.governance.decision.v2`. |
+| **Decisions are single-use at every authorization level** | ✅ Enforced | The fabric kept no record of what it had executed — every guard was stateless, and the OOB ledger was consulted only for L2+, so one signed risk-3 decision executed **4 times out of 4**. `GovernanceDecision` now carries `nonce` and `expires_at` inside the signed payload, and `verification/execution_ledger.py` claims the nonce before dispatch at every level. A failed execution stays resumable; a completed one is spent. → `tests/test_replay_protection.py` |
+| **Execution is bound to the approved proposal** | ✅ Enforced | `execution/fabric.py` (proposal id + content digest) → `tests/test_decision_integrity.py` |
+| **Out-of-Band Authority Verification** — a human approval signed over the decision, verified against a registered key, consumed in a persistent replay ledger | ✅ Enforced | `execution/fabric.py`, `crypto/signing.py`, `verification/oob_ledger.py` → `tests/test_oob_verification.py`. The approval is now **reserved before dispatch** and settled after, closing the check-then-consume window. |
+| **A partial-failure retry does not re-run completed side effects** | ✅ Enforced | Per-action completion tracking; a resumed execution skips actions that already succeeded under the same human approval. → `tests/test_replay_protection.py` |
+| **L2+ approval gating** — L2+ decisions are not auto-executed | ✅ Enforced | `strategy/cga_loop.py` (`approve_and_execute`) → `tests/test_approval_gating.py` |
+| **Durable replay protection in a governed deployment** | ✅ Enforced | Both ledgers default to `:memory:` in open mode, which meant replay protection evaporated on restart. `build_governed_deployment` now **raises** without a real ledger directory; `:memory:` requires an explicitly named prototype flag. → `tests/test_deployment_defaults.py` |
 
-- decision-signature verification now **fails closed by default** (no kernel key
-  configured ⇒ execution refused, unless an explicit prototype opt-out is set);
-- execution is **bound to the approved proposal** (a decision authorizes its
-  specific proposal, defeating decision/proposal confusion);
-- the lineage chain detects **head / tail / whole-chain truncation** via a chain
-  anchor (count + genesis + tip), not just per-record/neighbour checks;
-- the **OOB approval binds** the decision, proposal, authorization level, and
-  approver key into the signed message, with an optional **per-approver authority
-  ceiling**; the approval is consumed only **after a successful dispatch**;
-- the Tier-1 floor is forced **HARD** (a SOFT floor cannot silently fail to
-  enforce); the cost-ceiling evaluator **fails closed** when its amount cannot be
-  parsed.
+## Isolation
 
-Residual, honestly scoped: the lineage chain anchor lives in the same SQLite as
-the records (production anchors it in external/WORM storage); the per-approver
-authority ceiling and the kernel-key wiring are deployment configuration. *(GIM-2
-/ GIM-4 / GIM-5 — listed here as planned in the original June note — have since
-been built and are reflected in the matrix row above; only a separate-/independent-
-model classifier for GIM-1/GIM-2 remains Normative / Planned.)*
+| Capability / Claim | Status | Evidence |
+|---|---|---|
+| **The signing key and governance configuration are out of process** | ✅ Enforced | `client/governance_client.py` (`SubprocessGovernanceClient`) + `service/kernel_server.py`, default for the governed path → `tests/test_kernel_service.py` |
+| **The kernel resolves its own trust root** | ✅ Enforced | Previously circular: the agent-side parent supplied **both** the signed profile and the public keys verifying it, so the child verified the attacker's signature against the attacker's key. The child now resolves `GAP_TRUST_ROOT` — a path the deployer owns — and with a trust root in force the registry the parent hands down is deliberately empty. Required by default; absence **raises**. → `tests/test_deployment_defaults.py` |
+| **Persistent, pinnable kernel identity** | ✅ Enforced | The keypair was regenerated every process start, so no external auditor could pin it. It now persists, and the subprocess client pins it. Detects child substitution and silent key regeneration; does **not** defend against an adversary already executing code in the parent. |
+| **Boundary robustness** — correlated, bounded, non-leaking | ✅ Enforced | Two concurrent evaluations could each receive **the other's signed decision** (no lock, no request id, sync routes on one shared client from a threadpool). Now request-id correlated under a lock, failing closed and killing the child on desync. Requests are size-bounded (the read was unbounded — the agent could OOM the governance authority); errors are stable codes rather than exception text carrying paths and field values; the child's stdout is off the protocol channel. → `tests/test_boundary_hardening.py` |
+| **Structural isolation of governance from the agent** (spec §Layer 1) | 🟡 Partial | **This is the requirement the implementation meets least completely, and the most important row in this document.** The kernel's key and configuration are isolated. Signature *verification* is not: `ExecutionFabric` is constructed in the agent's process and holds the pinned kernel key and the unsigned-decisions escape hatch as ordinary mutable attributes, alongside the executor registry carrying tool credentials, the kill switch, the world model and the lineage store. An adversary with **code execution in the agent process** bypasses governance without forging anything — overwrite the pinned key, flip the flag, or call an executor directly. The boundary bounds an attacker who supplies governance *data*; it does not bound one who runs code beside the verifier. A socket/attach execution boundary that would close this is **not built**. See [Threat Model §4](THREAT_MODEL.md). |
+| **OS-level sandboxing of the kernel subprocess** | 🔧 Deployment-configured | Running the kernel as a separate OS user is what makes the private key genuinely unreachable. Same-user isolation is hygiene, not a boundary. |
 
-### Corrigibility review (SA-4)
+## Audit trail
 
-A focused adversarial review of the kill-switch primitive confirmed 3 defects,
-all since fixed and regression-tested:
+| Capability / Claim | Status | Evidence |
+|---|---|---|
+| **Tamper-evident decision lineage** — Ed25519-signed, hash-chained; tampering is detected and cannot be re-sealed without the lineage key | ✅ Enforced | `lineage/store.py` → `tests/test_lineage.py` (tamper, recompute-forgery, broken-link), `tests/test_lineage_identity.py` |
+| **Concurrent appends cannot drop records** | ✅ Enforced | `append` was an unsynchronized read-modify-write on a `check_same_thread=False` connection reached from a threadpool, so concurrent appends silently **dropped audit records** and permanently broke verification. Now lock-serialized under `BEGIN IMMEDIATE`. This refutes the previous edition's claim of "no reachable TOCTOU". → `tests/test_lineage_identity.py` |
+| **Signatures survive schema evolution** | ✅ Enforced | Verification ran against a re-serialization of the live Pydantic class, so any future model field silently invalidated the entire history. Canonical signed bytes are now persisted with a `schema_version`. |
+| **Signed chain anchor** — truncation detection cannot itself be rewritten | 🟡 Partial | The anchor (count + genesis + tip) is now Ed25519-signed, defeating an attacker who can write the database but does not hold the lineage key. It does **not** defeat one holding both — and the anchor still lives in the same SQLite file as the records it anchors, with the lineage key held by the same process that owns the database. There is no independent witness. |
+| **External/WORM anchoring** | 📋 Normative / Planned | The real answer to the row above. |
+| **Precise audit queries** | ✅ Enforced | `query_by_entity` built a `LIKE '%{id}%'` with no ESCAPE, so `%` and `_` in an entity id acted as wildcards and a raw-JSON substring match returned records merely mentioning the id elsewhere — an audit query silently returning wrong results. |
+| **Output Artifact Provenance** | 📋 Normative / Planned | `ArtifactProvenance` exists as an optional model field constructed only in tests. Nothing on any execution path computes an integrity hash or attaches provenance to a produced output. *Previously claimed in the README as a built mechanism; retracted.* |
+| **Separation of Creation and Validation** | 📋 Normative / Planned | `validation_independent` is a self-declared boolean defaulting to `False`. Nothing refuses or flags an artifact whose producer and validator are the same entity. *Previously claimed as "Independence is structural"; retracted.* |
 
-- GAP's autonomous heartbeat (`ReconcilerLoop` + the REST API) wired the
-  kill-switch into **nothing** — an engaged switch never halted the production
-  path. One shared switch now flows through the reconciler, every CGA loop it
-  spawns, and the fabric (`app.state.kill_switch`).
-- the CGA loop's halt check was **global-only**, so a per-entity halt let the
-  loop plan and then crash with an uncaught error, and a "find a path to yes"
-  generator could **retarget around** the halt. The loop check is now
-  scope-aware (symmetric with the fabric) and refuses to re-plan around a halt.
-- the advertised halt exception (`KillSwitchEngaged`) was **never raised** (the
-  fabric raised a generic `ExecutionError`); it is now the actual halt signal and
-  subclasses `ExecutionError` so existing handlers still catch it.
+## Corrigibility and containment
 
-The 7 rejected findings were correctly rejected: the execution model is
-synchronous and single-threaded (no reachable TOCTOU), and the authority/audit
-"over-claims" are honestly-disclosed skeleton boundaries (no operator
-authentication, in-memory log) already scoped in the matrix row above.
+| Capability / Claim | Status | Evidence |
+|---|---|---|
+| **Kill-switch halts planning and dispatch, fail-closed** | ✅ Enforced | `governance/corrigibility.py`, `execution/fabric.py` (`KillSwitchEngaged`, checked first), `strategy/cga_loop.py` (scope-aware, refuses to re-plan or retarget around a halt), shared through `ReconcilerLoop` and the REST app → `tests/test_corrigibility.py`. The structural property — the strategy layer holds no reference to the switch and cannot disengage it — is verified. |
+| **Operator authentication on the kill switch** | 🔧 Deployment-configured | The engage/disengage actor is a **free-text label**, not an authenticated identity, and the audit log is in-memory. Any in-process holder of the switch can flip it. Production binds an operator identity at the control plane and persists an append-only log. |
+| **The autonomous heartbeat survives bad input** | ✅ Enforced | `reconcile_once` had no exception containment: one entity carrying a timezone-aware `created_at` — the normal output of any real CRM, reachable through the ingest endpoint — raised, propagated out of `run_async`, and stopped governance **permanently and silently**. Failures are now contained per entity and recorded; the cycle degrades rather than the loop. → `tests/test_reconciler_resilience.py`, `tests/test_time_boundary.py` |
+| **The circuit breaker is observable and recoverable** | ✅ Enforced | It was a permanent, silent terminal state with no reset path. An entity in `awaiting_approval` also reset the failure counter, so the breaker could never trip on it and the loop re-planned forever, appending to the lineage chain every cycle. |
+| **Escalations are not dead letters** | ✅ Enforced | Dedupe keyed on `entity_id` alone silently swallowed a GIM `integrity_hold` when any escalation was already open on that entity. The reason is now part of the key. |
+| **Multi-agent / sub-agent governance** — delegation cannot amplify authority; constraints and halts propagate down the tree | 🟡 Partial | `governance/multi_agent.py` + `execution/sub_agent_executor.py` enforce ceilings, constraint accumulation and subtree halts **at dispatch** for any sub-agent routed through them → `tests/test_multi_agent.py`, `tests/test_sub_agent_executor.py`. Routing a *particular* orchestrator's sub-agents through that executor is deployment-side, and the delegation tree is in-memory and single-process. A distributed sub-agent fabric is Planned. |
+
+## Monitoring
+
+| Capability / Claim | Status | Evidence |
+|---|---|---|
+| **GIM-1 authorization drift, GIM-3 threshold-avoidance decomposition** | ✅ Enforced | Wired into the CGA loop; under `block_on_integrity` (on by default in a governed deployment) a flagged action is **held and escalated**, not merely logged → `tests/test_gim.py`, `tests/test_integration.py`. Monitors now observe **every action** in a proposal; they previously saw only `actions[0]`, so an agent could pack the sensitive action second. GIM-3 counts sub-threshold *repetition* within a window, not the spec's composite-vs-subtask authorization *gap*. |
+| **GIM-2 audit-behavior divergence, GIM-4 escalation-framing bias** | ⚪ Built, unfed | The metric math, thresholds and alerting are implemented and unit-tested. Both consume telemetry the **deployment** supplies (audit mode; how an escalation's options were framed). Nothing on the shipped path supplies it, so they do not fire in a default deployment. |
+| **GIM-5 adversarial collapse** | ⚪ Built, unfed | Implemented with the spec's two-consecutive-period debounce; no shipped path supplies challenger outcomes. |
+| **"Five independent detectors"** | 🟡 Partial | Two fire on the shipped path. Three are built and unfed. The README previously implied all five ran; corrected. |
+| **GIM independence** | 🟡 Partial | The monitor runs **inside the system it monitors** and reports back into it, which does not satisfy the GIM specification's independence requirements. The spec's independent-model evaluator is Planned. |
+| **Independent authorization review** | 🟡 Partial | `governance/independent_review.py` re-classifies required authorization by a different algorithm (risk signals, not the registry), so it cannot inherit the kernel's blind spots. **It is a keyword heuristic and is paraphrase-evadable — renaming an action defeats it.** A model-backed classifier is the pluggable adapter point and remains Planned. |
+| **Self-evolution capability-gain monitoring** | 🟡 Partial | `governance/self_evolution.py` counts only *realized* (executed) self-modifications; under `block_on_integrity` an agent in a flagged pattern has its next self-modification held. Deterministic over modification *metadata*, not a semantic capability measurement. **Dormant on the default reconciler path**: the reference `RuleBasedStrategyGenerator` never emits `skill_modification`. |
+| **Dynamic risk escalation** | ⚪ Built, unfed | `governance/dynamic_risk.py` implements volume, scope and cascade detectors, but its baseline/signal feed methods are called by **nothing** on any shipped path, so no escalation it defines can currently fire. Feeding it must not reintroduce a governance-config write on the RPC boundary. |
+
+## Intent
+
+| Capability / Claim | Status | Evidence |
+|---|---|---|
+| **Structured Intent Resolution (SIR)** | 🟡 Partial | SIR-1 (five-component declaration), SIR-3 (proportional resolution + readiness gate), SIR-4 (cryptographic seal), SIR-5 (governed standing declarations) are implemented and wired into the CGA loop as an **opt-in** readiness gate → `tests/test_sir.py`, `tests/test_integration.py`. SIR-2 meta-intent inference is a deterministic keyword heuristic, surfaced for a human to confirm or correct; it is advisory, not a gate. |
+| **The SIR gate on the shipped path** | ⚪ Built, unfed | The shipped `ReconcilerLoop` and REST API run the CGA loop **without** the SIR gate. |
+| **`declared_boundaries` enforcement** | 📋 Normative / Planned | SIR captures "what the system will NOT do" and **nothing ever checks a proposal against it**. `verify_seal` has zero callers in the codebase. |
+
+## Strategy layer
+
+| Capability / Claim | Status | Evidence |
+|---|---|---|
+| **CGA cannot negotiate around a hard constraint** — replan within bounds or escalate, never bypass | ✅ Enforced | `strategy/cga_loop.py` → `tests/test_adversarial.py` |
+| **The strategy layer cannot launder state into governance** | ✅ Enforced | The live mutable `WorldModel` was handed to the pluggable (untrusted, deployment-supplied) generator, which could set `gdpr_consent = True` and have the next evaluation read it — laundering with no actions at all. The generator now receives a deep copy. → `tests/test_strategy_isolation.py` |
+| **Proposer/Critic adversarial pair** (spec §CGA step 3) | 📋 Normative / Planned | `grep -i "critic\|proposer"` over `gap_kernel/` returns nothing. The reference generator is a deterministic rule ladder. *Previously described in the README as the shipped mechanism; retracted.* |
+| **Reconciler Tiers 1–3** (ML / cognitive / adversarial observation) | 📋 Normative / Planned | Tier 0 (rule-based) is implemented. |
+| **The Iron Rule** — learning never modifies governance policy | ✅ Enforced | Structural with respect to the learning engine: `learning/engine.py` has no write path to governance configuration. It does **not** hold against an adversary with code execution in the agent process — see the isolation row above. |
+
+---
+
+## Known regressions and migration
+
+- **Decisions signed under the v1 domain tag no longer verify.** Moving
+  `kernel_public_key_id` into the signed payload and bumping to
+  `gap.governance.decision.v2` was a deliberate one-way change. Nothing in the
+  repository migrates historical decisions, including any already persisted
+  inside a lineage record.
+- **The mutating HTTP routes no longer ship by default.** A deployment that
+  relied on `POST /intents`, `POST /world/ingest`, `PUT /reconciler/config` or
+  the learning/escalation writers must pass
+  `create_app(enable_mutating_routes=True)` and put its own authenticated proxy
+  in front. `POST /governance/action-types` is gone permanently.
+- **A governed deployment now raises without a trust root and a ledger
+  directory.** Both were previously implicit and unsafe.
+
+## What this implementation does not claim
+
+Stated plainly, because the alternative is the calibration gap this document
+exists to close:
+
+1. It does not defend against an adversary with code execution in the agent
+   process. That is the architecture, not a bug backlog item.
+2. It has had **no external security review**. Every finding fixed here was
+   found by its own maintainers and tooling.
+3. It has **no adopters, no tagged release, and one author**. Nothing here has
+   been tested by an independent implementer.
+4. Its regulatory evaluators check structure, not legal compliance. No
+   regulator has reviewed them, and alignment tables elsewhere describe design
+   intent, not certification.

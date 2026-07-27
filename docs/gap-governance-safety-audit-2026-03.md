@@ -1,6 +1,20 @@
 # GENERAL AUTONOMY PROTOCOL — GOVERNANCE AND SAFETY AUDIT
-## Independent Assessment of GAP Specification and Kernel Implementation
+## Self-Assessment of GAP Specification and Kernel Implementation
 ## March 2026
+
+> ⚠️ **This is a self-audit, not an independent audit.** It was commissioned,
+> run, and written inside the project. No external auditor, security firm, or
+> third party reviewed GAP or produced any part of this document. Earlier
+> revisions described it as an "independent assessment"; that overstated its
+> provenance and conflicted with the protocol's own Principle 9 (Epistemic
+> Honesty), so the label has been corrected.
+>
+> What the audit *is*: a deliberately adversarial internal review that reads the
+> code rather than the prose, and that found the project's own strongest claims
+> unearned. Its findings are substantive and drove a real remediation program —
+> read them on that basis. But a self-run review cannot supply the assurance an
+> external review supplies, and nothing here should be cited as external
+> validation.
 
 ---
 
@@ -11,7 +25,7 @@
 | **Audit Date** | March 2026 |
 | **Scope** | GAP Specification (README.md) + Kernel Implementation (`gap_kernel/`) + Extension Specs (`docs/`) + Test Suite (`tests/`) |
 | **Version Audited** | Commit `2b0b5d4` on branch `claude/gap-kernel-implementation-25Zt0` |
-| **Auditor Context** | Independent assessment requested by protocol author. Evidence-based evaluation of governance design and safe-autonomy properties. |
+| **Auditor Context** | **Self-audit.** Run by the project, at the protocol author's request, against the project's own code. Not independent, not externally reviewed. Evidence-based evaluation of governance design and safe-autonomy properties. |
 | **Assessment Type** | Governance posture + safe-autonomy readiness |
 | **Status** | Baseline audit complete. Cross-reference with 8 related Nexeom repositories completed June 2026 — see CROSS-REFERENCE. **Superseded by the post-remediation re-audit: [`gap-governance-safety-audit-2026-06.md`](gap-governance-safety-audit-2026-06.md)** (re-scores every finding below against the built remediation). |
 
@@ -256,13 +270,13 @@ the assurance argument, not optional.
 | **Decision Lineage** (tamper-evident) | Complete | **Partial** | SHA-256 chaining exists but in-memory by default; hash, not crypto signature; no external anchor |
 | **Structured Uncertainty** | Complete | **Implemented** | `UncertaintyDeclaration` model, populated in decisions |
 | **Authorization Levels (L0-L4)** | Complete | **Implemented** | `AuthorizationLevel` enum, evaluated in kernel |
-| **Action Type Registry** | Complete | **Implemented** | 6 baseline types registered; but `action_type_id` is Optional |
+| **Action Type Registry** | Complete | **Implemented** | 5 baseline types registered; but `action_type_id` is Optional |
 | **Multi-Phase Authorization** | Complete | **Implemented** | Intent gate + outcome gate in kernel |
 | **Dynamic Risk Escalation** | Complete | **Implemented** | `DynamicRiskEngine` with 4 trigger types; baseline manual-only |
 | **Out-of-Band Authority Verification** | Complete | **Stub** | Checks string presence, not actual verification; in-memory replay protection |
 | **Policy Tier Classification** | Complete | **Spec-only** | No tier field on constraints; no Tier 1 enforcement |
 | **Applicability Profiles** | Complete | **Spec-only** | No profile model or loader |
-| **Regulatory Constraint Categories** | Complete | **Spec-only** | 3 illustrative checks; 5 categories silently pass |
+| **Regulatory Constraint Categories** | Complete | **Spec-only** | 3 evaluator functions, but only 2 map to a regulatory category (Cat 1, Cat 2); 6 of 8 categories silently pass |
 | **Data Classification Tags** | Complete | **Spec-only** | No classification model |
 | **Governance Integrity Monitoring** | Complete | **Not started** | 0 lines of implementation; spec in `docs/` only |
 | **Structured Intent Resolution** | Complete | **Not started** | 0 lines of implementation; spec in `docs/` only |
@@ -272,8 +286,24 @@ the assurance argument, not optional.
 | **SpendGate** (financial governance) | Complete | **Partial** | Cost ceiling check exists; full SpendGate not implemented |
 | **Adversarial Integrity Verification** | Non-normative | **Not started** | No adversarial tests in suite |
 
-**Summary:** Of 22 claimed capabilities, 7 are fully implemented, 5 are
-partial, 2 are stubs, 6 are spec-only, and 2 are not started.
+**Summary:** Of the 22 claimed capabilities above, **8** are fully implemented,
+**1** is convention only, **4** are partial, **1** is a stub, **5** are
+spec-only, and **3** are not started. (8 + 1 + 4 + 1 + 5 + 3 = 22.)
+
+*Correction.* An earlier revision of this line read "7 fully implemented, 5
+partial, 2 stubs, 6 spec-only, 2 not started" — every bucket was miscounted and
+the "convention only" bucket, which holds the audit's own headline Iron Rule
+finding, was omitted entirely. The matrix rows above are authoritative and were
+not changed; only the tally was wrong. Two matrix cells were separately corrected
+for fact: the Action Type Registry row said "6 baseline types registered" where
+commit `2b0b5d4` registered **5** (`task_execution`, `skill_modification`,
+`drift_reconciliation`, `escalation`, `policy_proposal`); and the Regulatory
+Constraint Categories row's "3 illustrative checks" counts *evaluator functions*,
+of which only **2** map to the spec's eight Regulatory Constraint Categories —
+`gdpr_consent_required` (Cat 1) and `no_contact_outside_hours` (Cat 2). The third,
+`cost_ceiling`, is an organizational budget check and belongs to no regulatory
+category. Category coverage at this baseline was therefore **2 of 8**, and
+"5 categories silently pass" should read **6**.
 
 ---
 
@@ -355,9 +385,12 @@ mistake aspiration for assurance.
 
 The following Nexeom repositories were cross-referenced (June 2026) against the
 gaps identified in this audit. Each was searched for the six pattern categories
-in the methodology below, and **every cited match was independently verified to
-be working implementation** rather than spec prose, stubs, comments, or naming
-coincidence — the same standard this audit holds GAP to. (This verification pass
+in the methodology below, and **every cited match was verified against canonical
+source to be working implementation** rather than spec prose, stubs, comments, or
+naming coincidence — the same standard this audit holds GAP to. ("Verified" here
+means a second pass re-read the cited file rather than trusting the first pass;
+it does not mean an independent party checked the work — this cross-reference is
+self-run, like the rest of this document.) (This verification pass
 corrected several first-round overclaims: e.g. Xstatic's runtime kill-switch was
 initially missed, and AiTrium's approval-forgery test was found to exercise an
 inline-mirrored copy of the guard rather than the shipped path.)

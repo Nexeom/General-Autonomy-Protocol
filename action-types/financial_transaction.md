@@ -4,6 +4,19 @@
 **Version:** 1.0
 **Date:** 2026-02-23
 **Status:** Draft — Open for Community Review
+**Implementation status:** **Not implemented.** No part of this specification
+ships in the GAP reference kernel.
+
+> ⚠️ **This is a specification, not a shipped capability.** `grep` for
+> `financial_transaction`, `SpendGate`, or `GAP-AT-FIN` across `gap_kernel/`
+> returns zero results. There is no `financial_transaction` action type in the
+> baseline registry, no SpendGate constraint stack, no `FinancialProvenance`
+> model, and no vendor whitelist. The kernel's `cost_ceiling` constraint
+> evaluator is a single spend-ceiling check — it is not SpendGate and implements
+> none of the five constraint layers below.
+>
+> A deployment that needs governed financial action must build this itself. Do
+> not read anything below as describing behavior you get by installing GAP.
 
 ---
 
@@ -26,7 +39,7 @@ GAP's Action Type Registry provides the mechanism to define governance configura
 | action_type | financial_transaction |
 | Category | External · Financial · Irreversible |
 | Default Authorization Level | L2 (Approve Before Execution) |
-| Minimum Authorization Level | L1 (Notify) — only for pre-approved micro-transactions |
+| Minimum Authorization Level | L0 (Fully Autonomous) — `api_micropayment` only, and only under the conditions in §2.2 |
 | Maximum Authorization Level | L4 (Human Only) — configurable per organization |
 | Iron Rule Impact | The governed agent cannot modify financial governance thresholds. Structural enforcement applies. |
 | Reversibility | Non-reversible. On-chain and wire transactions are final. |
@@ -120,11 +133,11 @@ Financial CGA has specific replan strategies that differ from general action rep
 
 ### 4.2 Loop Bounds
 
-Financial CGA loops are bounded more tightly than standard CGA to prevent runaway replan cycles that could result in unintended spend patterns:
+Financial CGA loops carry a hard, non-negotiable bound to prevent runaway replan cycles that could result in unintended spend patterns:
 
-- Maximum **3 replan attempts** per financial action (recommended default; standard actions typically allow 5).
+- Maximum **3 governance attempts** per financial action — the initial proposal plus at most 2 replans. This is a ceiling, not just a default: a conformant financial deployment MUST NOT raise it. (The reference `CGALoop` uses `max_attempts=3` for all action types, so financial actions are not *more* tightly bounded than others by default; what this specification adds is that the bound is mandatory here and cannot be configured upward.)
 - **Mandatory Critic review** on every replan iteration, not just the final proposal. Financial replanning must be adversarially validated at each step.
-- **Escalation on loop exhaustion:** If 3 replans fail to produce a governed path, the action escalates to human with full negotiation lineage attached.
+- **Escalation on loop exhaustion:** If the 3 attempts fail to produce a governed path, the action escalates to human with full negotiation lineage attached.
 - **No silent degradation:** The agent cannot silently substitute a cheaper alternative without governance approval. Every replan is a new proposal evaluated against the full constraint stack.
 
 ---
@@ -211,11 +224,11 @@ Tolerance thresholds are part of the SpendGate configuration, set by the human p
 | api_micropayment | Confirm | L0 (within SpendGate) | L0 (within SpendGate) |
 | payment_receive | Proceed | L1 (Notify) | L1 (Notify) |
 | budget_allocate | Confirm | L1 (Notify) | L1 (Notify) |
-| payment_send | Block | L2 (Confirm) | L2 (Confirm) |
-| trade_execute | Block | L2 (Confirm) | Threshold-dependent |
-| yield_manage | Block | L3 (Collaborative) | L2 (Confirm) |
+| payment_send | Block | L2 (Approve Before) | L2 (Approve Before) |
+| trade_execute | Block | L2 (Approve Before) | Threshold-dependent, never below L2 |
+| yield_manage | Block | L2 (Approve Before) | L2 (Approve Before) |
 
-Sandbox tier blocks all outbound financial operations by default. Sandbox environments are for safe experimentation — agents in sandbox cannot spend real funds.
+Every Standard-tier level in this matrix equals the subtype's Default Auth in §2.2 — the matrix restates the registry defaults per deployment tier, it does not override them. Sandbox tier blocks all outbound financial operations by default. Sandbox environments are for safe experimentation — agents in sandbox cannot spend real funds.
 
 ---
 
@@ -249,7 +262,7 @@ This Action Type specification is a direct application of existing GAP protocol 
 | **Multi-Phase Authorization** | Intent gate and outcome gate ensure authorization does not pre-approve outcomes. Each phase evaluated independently. |
 | **Separation of Creation and Validation** | Critic reviews every financial proposal. The Proposer cannot self-certify financial actions. |
 | **Structured Uncertainty** | Decision Records capture what was uncertain at the time of authorization — price volatility, counterparty risk, execution probability. |
-| **Adversarial Reasoning** | Mandatory Proposer/Critic evaluation for financial actions. The tighter CGA loop (3 iterations) reflects the irreversible nature of financial execution. |
+| **Adversarial Reasoning** | Mandatory Proposer/Critic evaluation for financial actions. The CGA loop is capped at 3 governance attempts and, unlike the general case, that cap is non-configurable — reflecting the irreversible nature of financial execution. |
 | **Reconciliation** | Outcome gate validates execution matches intent. Discrepancy handling uses the standard drift event mechanism with financial context. |
 | **Dynamic Risk Escalation** | Financial behavioral patterns (sudden volume spike, new counterparty categories, unusual timing) can trigger runtime authorization tier increases. |
 | **Out-of-Band Authority Verification** | L2+ financial authorizations require human identity verification through channels independent of the agent's environment. |

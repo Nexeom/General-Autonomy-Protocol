@@ -7,7 +7,11 @@ Thank you for your interest in contributing to the General Autonomy Protocol. GA
 ### Reporting Issues
 
 - Use [GitHub Issues](https://github.com/Nexeom/General-Autonomy-Protocol/issues) for bug reports, protocol questions, and feature requests
-- For security vulnerabilities, please email security@nexeom.ca directly — do not open a public issue
+- For security vulnerabilities, email **security@nexeom.ca** directly — do not open a public issue. Read [SECURITY.md](SECURITY.md) first: it defines what counts as a finding, what a report needs to be actionable, and what is already a documented limitation rather than a new vulnerability.
+
+**Set your expectations honestly.** This project has a single maintainer, no
+external security review, and no published response-time commitment. Treat
+`security@nexeom.ca` as best-effort.
 
 ### Protocol Feedback
 
@@ -24,7 +28,7 @@ Open a [Discussion](https://github.com/Nexeom/General-Autonomy-Protocol/discussi
 
 1. **Fork** the repository
 2. **Create a branch** from `main` (`git checkout -b feature/your-feature`)
-3. **Write tests** — all contributions must include tests. Current suite: 111 tests, 0 failures.
+3. **Write tests** — all contributions must include tests. Current suite: 550 tests, 0 failures, 93% line coverage. CI enforces a 90% coverage floor, so a change that drops coverage below it fails the build.
 4. **Follow existing patterns** — Pydantic models for data structures, pytest for testing
 5. **Submit a Pull Request** with a clear description of what changed and why
 
@@ -49,12 +53,12 @@ pip install -e ".[dev]"
 # Run the test suite
 pytest tests/ -v
 
-# All 381 tests should pass before you submit a PR
+# All 550 tests should pass before you submit a PR
 ```
 
 ## Code Standards
 
-- **Python 3.11+** required
+- **Python 3.11+** required. CI runs the suite on 3.11, 3.12 and 3.13 on Linux, plus 3.13 on Windows — so avoid POSIX-only path and process assumptions.
 - **Pydantic** for all data models — typed, validated, serializable
 - **Type hints** on all function signatures
 - Clear docstrings on public APIs
@@ -62,7 +66,10 @@ pytest tests/ -v
   dependency is code that runs in the process holding the signing key. The core
   depends only on `pydantic`, `croniter`, and `cryptography`. Adding a runtime
   dependency needs justification in the PR.
-- `ruff check gap_kernel/ tests/` must pass
+- `ruff check gap_kernel/ tests/` must pass — CI runs exactly this command
+- **No framework lock-in.** GAP does not depend on LangGraph, LangChain, or any
+  agent framework, and contributions must not introduce one. The kernel governs
+  abstract Decision Records; framework adapters belong outside the kernel.
 
 ## Protocol Governance
 
