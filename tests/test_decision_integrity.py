@@ -161,6 +161,30 @@ def test_fabric_rejects_proposal_content_substitution():
         fabric.execute(malicious, decision)
 
 
+def test_every_action_is_visible_to_dynamic_risk_escalation():
+    """Reporting only actions[0] to the risk engine leaves every later action's
+    target invisible — which is precisely where a decomposed plan hides its
+    out-of-baseline reach. All actions must be scored."""
+    kernel = GovernanceKernel()
+    kernel._dynamic_risk_engine.set_baseline("send_email", targets={"known_lead"})
+    proposal = StrategyProposal(
+        id="prop_multi", intent_id="i1", attempt_number=1, plan_description="p",
+        actions=[
+            PlannedAction(action_type="send_email", target="known_lead",
+                          parameters={}, risk_score=1),
+            PlannedAction(action_type="send_email", target="unknown_lead",
+                          parameters={}, risk_score=1),
+        ],
+        estimated_cost=0.02, rationale="r", generated_at=utcnow(),
+    )
+    decision = kernel.evaluate_proposal(
+        proposal=proposal, intents=[_intent()], world_state=_world()
+    )
+    assert decision.escalation_triggered is True
+    assert decision.escalation_evidence["target"] == "unknown_lead"
+    assert decision.authorization_level == AuthorizationLevel.L1
+
+
 def test_kernel_signature_survives_downstream_oob_approval():
     """The kernel signature must still verify after the human approval fields are
     added downstream (they are excluded from the kernel's signed payload)."""
@@ -169,6 +193,7 @@ def test_kernel_signature_survives_downstream_oob_approval():
         id="gov_l2e", proposal_id="prop_e", verdict=GovernanceVerdict.APPROVED,
         authorization_level=AuthorizationLevel.L2, temporal_context={},
         policy_snapshot={}, evaluated_at=utcnow(),
+        nonce="nonce_l2e", expires_at=utcnow() + timedelta(minutes=5),
     )
     decision.decision_signature = sign(kernel_priv, canonical_decision_payload(decision))
 

@@ -163,7 +163,6 @@ def test_subprocess_client_call_times_out():
 
 from gap_kernel.crypto.signing import PublicKeyRegistry, generate_keypair  # noqa: E402
 from gap_kernel.governance.profile import ApplicabilityProfile, sign_profile  # noqa: E402
-from gap_kernel.models.governance import ActionTypeSpec  # noqa: E402
 from gap_kernel.models.intent import Constraint, ConstraintType  # noqa: E402
 from gap_kernel.service.kernel_server import dump_governed_config  # noqa: E402
 
@@ -215,17 +214,15 @@ def test_subprocess_rejects_a_tampered_profile_fail_closed():
         SubprocessGovernanceClient(governed_config=config)
 
 
-def test_action_type_registry_proxied_across_the_boundary():
-    """The action-type registry (a governance-config surface) is reachable through
-    the boundary, so an isolated deployment is a complete drop-in."""
+def test_action_type_registry_is_readable_but_not_writable_across_the_boundary():
+    """The action-type registry is READ-ONLY through the boundary: an isolated
+    deployment can inspect it, but the agent side cannot add to it — the registry
+    comes from the signed Applicability Profile, so a write from here would be an
+    unsigned change to the governance configuration."""
     with SubprocessGovernanceClient() as client:
         assert "task_execution" in client.get_registered_action_types()
         assert client.get_action_type("nope") is None
-        client.register_action_type(
-            ActionTypeSpec(type_id="custom_x", description="a custom type"), "admin"
-        )
-        got = client.get_action_type("custom_x")
-        assert got is not None and got.registered_by == "admin"
+        assert not hasattr(client, "register_action_type")
 
 
 def test_failed_construction_leaves_no_temp_file():

@@ -1,9 +1,10 @@
 """Governance clients — the agent-side handle to the governance kernel (Fix 2).
 
 The strategy/reconciler layers consume a client, never the GovernanceKernel
-class. A client exposes exactly two capabilities — request an evaluation and
-read the kernel's public key — and is a drop-in for the kernel in CGALoop
-(both provide ``evaluate_proposal`` + ``public_key_hex``).
+class. A client can request an evaluation, read the kernel's public key, and READ
+the action-type registry — nothing on this side can change governance
+configuration — and is a drop-in for the kernel in CGALoop (both provide
+``evaluate_proposal`` + ``public_key_hex``).
 
   * ``SubprocessGovernanceClient`` is the genuine structural boundary (G-2): the
     kernel — with its private signing key and policy registry — runs in a
@@ -17,12 +18,13 @@ read the kernel's public key — and is a drop-in for the kernel in CGALoop
 from __future__ import annotations
 
 import concurrent.futures
+import itertools
 import json
 import os
 import subprocess
 import sys
 import tempfile
-from datetime import datetime
+import threading
 from typing import Dict, List, Optional
 
 from gap_kernel.models.governance import ActionTypeSpec, GovernanceDecision
@@ -41,15 +43,16 @@ def _evaluate_request(
     intents: List[IntentVector],
     world_state: WorldModel,
     action_type_id: Optional[str],
-    current_time: Optional[datetime] = None,
 ) -> dict:
+    """The evaluation request, carrying no clock. The kernel on the far side reads
+    its own time: a caller-named time is a caller-chosen set of active
+    constraints, which is not something the governed side gets to choose."""
     return {
         "method": "evaluate",
         "proposal": proposal.model_dump(mode="json"),
         "intents": [i.model_dump(mode="json") for i in intents],
         "world_state": world_state.model_dump(mode="json"),
         "action_type_id": action_type_id,
-        "current_time": current_time.isoformat() if current_time else None,
     }
 
 
@@ -77,17 +80,16 @@ class InProcessGovernanceClient:
         proposal: StrategyProposal,
         intents: List[IntentVector],
         world_state: WorldModel,
-        current_time: Optional[datetime] = None,
         action_type_id: Optional[str] = None,
     ) -> GovernanceDecision:
-        response = self._handle(
-            _evaluate_request(proposal, intents, world_state, action_type_id, current_time)
-        )
+        response = self._handle(_evaluate_request(proposal, intents, world_state, action_type_id))
         if not response.get("ok"):
             raise GovernanceClientError(response.get("error"))
         return GovernanceDecision.model_validate(response["decision"])
 
-    # Action-type registry proxy (governance-config surface across the boundary).
+    # Action-type registry — read only. There is no registration proxy: the
+    # registry is carried by the signed Applicability Profile, and writing to it
+    # from this side would be an unsigned change to the governance configuration.
     def get_registered_action_types(self) -> Dict[str, ActionTypeSpec]:
         response = self._handle({"method": "list_action_types"})
         if not response.get("ok"):
@@ -100,16 +102,6 @@ class InProcessGovernanceClient:
             raise GovernanceClientError(response.get("error"))
         spec = response["action_type"]
         return ActionTypeSpec.model_validate(spec) if spec else None
-
-    def register_action_type(self, spec: ActionTypeSpec, registered_by: str) -> ActionTypeSpec:
-        response = self._handle({
-            "method": "register_action_type",
-            "spec": spec.model_dump(mode="json"),
-            "registered_by": registered_by,
-        })
-        if not response.get("ok"):
-            raise GovernanceClientError(response.get("error"))
-        return ActionTypeSpec.model_validate(response["action_type"])
 
 
 class SubprocessGovernanceClient:
@@ -130,6 +122,15 @@ class SubprocessGovernanceClient:
         # readline() cannot be interrupted portably (no select() on Windows pipes),
         # so reads run on a single-worker thread guarded by a timeout.
         self._reader = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        # One client is driven from several threads at once — every FastAPI route
+        # is a synchronous ``def``, which Starlette runs in a worker threadpool.
+        # The write/read pair is therefore serialised AND every response carries
+        # the id of the request it answers: without both, two concurrent
+        # evaluations can each receive the OTHER's signed decision, which is a
+        # validly-signed authorization for a proposal the caller never made.
+        self._lock = threading.Lock()
+        self._request_ids = itertools.count(1)
+        self._broken = False
         # Set these first so the attributes always exist even if construction
         # fails partway — close()/__del__ rely on them for cleanup.
         self._config_path: Optional[str] = None
@@ -165,30 +166,48 @@ class SubprocessGovernanceClient:
     def public_key_hex(self) -> str:
         return self._public_key_hex
 
-    def _call(self, request: dict) -> dict:
-        if self._proc.poll() is not None:
-            raise GovernanceClientError("governance service process is not running")
-        try:
-            self._proc.stdin.write(json.dumps(request) + "\n")
-            self._proc.stdin.flush()
-        except OSError as exc:
-            raise GovernanceClientError(f"cannot reach governance service: {exc}") from exc
-
-        # Bounded read — fail closed (and kill the child) on a hang.
-        future = self._reader.submit(self._proc.stdout.readline)
-        try:
-            line = future.result(timeout=self._timeout)
-        except concurrent.futures.TimeoutError:
+    def _fail_closed(self, message: str) -> GovernanceClientError:
+        """Kill the child and refuse every later call. Once a response cannot be
+        matched to its request the stream is offset, and the next line read would
+        answer somebody else's request — so the channel is finished, not retried."""
+        self._broken = True
+        if self._proc is not None:
             self._proc.kill()
-            raise GovernanceClientError("governance service timed out")
-        if not line:
-            raise GovernanceClientError("no response from governance service")
-        try:
-            response = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise GovernanceClientError(
-                f"malformed response from governance service: {exc}"
-            ) from exc
+        return GovernanceClientError(message)
+
+    def _call(self, request: dict) -> dict:
+        with self._lock:
+            if self._broken:
+                raise GovernanceClientError("governance channel is closed after a protocol fault")
+            if self._proc.poll() is not None:
+                raise GovernanceClientError("governance service process is not running")
+            request_id = next(self._request_ids)
+            try:
+                self._proc.stdin.write(json.dumps({**request, "id": request_id}) + "\n")
+                self._proc.stdin.flush()
+            except OSError as exc:
+                # A partial write leaves the child mid-request, so the channel is
+                # offset just as surely as a crossed response.
+                raise self._fail_closed(f"cannot reach governance service: {exc}") from exc
+
+            # Bounded read — fail closed (and kill the child) on a hang.
+            future = self._reader.submit(self._proc.stdout.readline)
+            try:
+                line = future.result(timeout=self._timeout)
+            except concurrent.futures.TimeoutError:
+                raise self._fail_closed("governance service timed out")
+            if not line:
+                raise self._fail_closed("no response from governance service")
+            try:
+                response = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise self._fail_closed(
+                    f"malformed response from governance service: {exc}"
+                ) from exc
+            if not isinstance(response, dict) or response.get("id") != request_id:
+                raise self._fail_closed(
+                    "governance service response does not answer this request"
+                )
         if not response.get("ok"):
             raise GovernanceClientError(response.get("error"))
         return response
@@ -198,15 +217,14 @@ class SubprocessGovernanceClient:
         proposal: StrategyProposal,
         intents: List[IntentVector],
         world_state: WorldModel,
-        current_time: Optional[datetime] = None,
         action_type_id: Optional[str] = None,
     ) -> GovernanceDecision:
-        response = self._call(
-            _evaluate_request(proposal, intents, world_state, action_type_id, current_time)
-        )
+        response = self._call(_evaluate_request(proposal, intents, world_state, action_type_id))
         return GovernanceDecision.model_validate(response["decision"])
 
-    # Action-type registry proxy (governance-config surface across the boundary).
+    # Action-type registry — read only. There is no registration proxy: the
+    # registry is carried by the signed Applicability Profile, and writing to it
+    # from this side would be an unsigned change to the governance configuration.
     def get_registered_action_types(self) -> Dict[str, ActionTypeSpec]:
         response = self._call({"method": "list_action_types"})
         return {k: ActionTypeSpec.model_validate(v) for k, v in response["action_types"].items()}
@@ -215,14 +233,6 @@ class SubprocessGovernanceClient:
         response = self._call({"method": "get_action_type", "type_id": type_id})
         spec = response["action_type"]
         return ActionTypeSpec.model_validate(spec) if spec else None
-
-    def register_action_type(self, spec: ActionTypeSpec, registered_by: str) -> ActionTypeSpec:
-        response = self._call({
-            "method": "register_action_type",
-            "spec": spec.model_dump(mode="json"),
-            "registered_by": registered_by,
-        })
-        return ActionTypeSpec.model_validate(response["action_type"])
 
     def close(self) -> None:
         """Idempotent; tolerant of a partially-constructed client (``_proc`` may be

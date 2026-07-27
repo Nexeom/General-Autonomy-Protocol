@@ -16,7 +16,7 @@ Behavioral Contract:
 - Enforces Separation of Creation and Validation for governed outputs
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from uuid import uuid4
 
@@ -467,6 +467,15 @@ _AUTH_RANK = {
 }
 
 
+def _escalation_rank(trigger) -> int:
+    """Ordinal of the level an escalation trigger raises to. An unrecognized level
+    takes the maximum — the kernel cannot certify an unknown level as the weaker."""
+    try:
+        return _AUTH_RANK[AuthorizationLevel(trigger.escalated_level)]
+    except ValueError:
+        return max(_AUTH_RANK.values())
+
+
 def _satisfies_auth(granted: AuthorizationLevel, required: AuthorizationLevel) -> bool:
     """True if a granted authorization level meets or exceeds a required one."""
     return _AUTH_RANK[granted] >= _AUTH_RANK[required]
@@ -503,6 +512,11 @@ _REVERSIBILITY_WEIGHT = {"reversible": 0, "partially_reversible": 1, "irreversib
 _BLAST_RADIUS_WEIGHT = {"narrow": 0, "moderate": 1, "wide": 2}
 
 _RANK_TO_AUTH = {rank: level for level, rank in _AUTH_RANK.items()}
+
+# How long a signed decision remains executable. An authorization the kernel
+# rendered against a world state and a policy set at time T is not still good an
+# arbitrary time later, so every decision carries an expiry the fabric enforces.
+_DEFAULT_DECISION_TTL_SECONDS = 900
 
 
 def _risk_weight(table: Dict[str, int], descriptor: str) -> int:
@@ -716,6 +730,7 @@ class GovernanceKernel:
         kernel_key_id: str = "governance_kernel",
         governed: bool = False,
         allow_untracked_targets: Optional[bool] = None,
+        decision_ttl_seconds: int = _DEFAULT_DECISION_TTL_SECONDS,
     ):
         # Governed mode fails closed: it REQUIRES the industry-specific regulatory
         # floor (an Applicability Profile) and forces strict action typing. A
@@ -727,6 +742,12 @@ class GovernanceKernel:
                 "A governed GovernanceKernel requires an Applicability Profile "
                 "(the regulatory floor); refusing to run ungoverned."
             )
+        if decision_ttl_seconds <= 0:
+            raise GovernanceConfigError(
+                f"decision_ttl_seconds must be positive; got {decision_ttl_seconds}. "
+                f"Every signed decision must carry a usable, bounded lifetime."
+            )
+        self._decision_ttl_seconds = decision_ttl_seconds
         # A kernel is governed once it carries a signed profile, whether or not
         # the caller passed governed=True: the profile IS the declared floor, and
         # the guarantees below (registry immutability, kernel-owned clock) hold
@@ -976,12 +997,56 @@ class GovernanceKernel:
         return self._public_key_hex
 
     def _sign_decision(self, decision: GovernanceDecision) -> GovernanceDecision:
-        """Sign a decision with the kernel's private key (Fix 2)."""
+        """Stamp the single-use fields, then sign with the kernel's private key.
+
+        The nonce and the expiry are set BEFORE signing and are inside the
+        canonical payload, so the Execution Fabric's replay authority keys on an
+        authenticated identity and the lifetime cannot be extended downstream.
+        The expiry is measured from the kernel's OWN clock, never from a
+        caller-supplied evaluation time — otherwise naming a future time would
+        buy a longer-lived authorization.
+        """
         decision.kernel_public_key_id = self._kernel_key_id
+        decision.nonce = uuid4().hex
+        decision.expires_at = utcnow() + timedelta(seconds=self._decision_ttl_seconds)
         decision.decision_signature = sign(
             self._signing_key_hex, canonical_decision_payload(decision)
         )
         return decision
+
+    def _evaluate_dynamic_risk(
+        self,
+        proposal: StrategyProposal,
+        action_type_id: Optional[str],
+        auth_level: AuthorizationLevel,
+    ) -> Optional[object]:
+        """Run the Dynamic Risk engine over EVERY action in the proposal.
+
+        The engine scores one action per call, so a proposal must be fed action
+        by action; the strongest escalation any of them provokes governs the
+        whole proposal (escalation is unidirectional — up only).
+        """
+        contexts = [
+            (action_type_id or action.action_type, action.target)
+            for action in proposal.actions
+        ] or [("unknown", "")]
+
+        strongest = None
+        for action_type, target in contexts:
+            trigger = self._dynamic_risk_engine.evaluate(
+                action_type=action_type,
+                action_context={
+                    "current_auth_level": auth_level.value,
+                    "target": target,
+                    "proposal_id": proposal.id,
+                },
+                current_auth_level=auth_level.value,
+            )
+            if trigger is None:
+                continue
+            if strongest is None or _escalation_rank(trigger) > _escalation_rank(strongest):
+                strongest = trigger
+        return strongest
 
     def evaluate_proposal(
         self,
@@ -1142,14 +1207,13 @@ class GovernanceKernel:
         escalated_auth_level_str = None
         escalation_evidence = None
 
-        escalation_trigger = self._dynamic_risk_engine.evaluate(
-            action_type=action_type_id or proposal.actions[0].action_type if proposal.actions else "unknown",
-            action_context={
-                "current_auth_level": auth_level.value,
-                "target": proposal.actions[0].target if proposal.actions else "",
-                "proposal_id": proposal.id,
-            },
-            current_auth_level=auth_level.value,
+        # The engine's scope-expansion check reads ONE target per call, so a
+        # proposal is evaluated once per action: reporting only actions[0] left
+        # every later action's target invisible to the detector, which is exactly
+        # where a decomposed plan hides its out-of-baseline reach. The highest
+        # escalation any action provokes governs the whole proposal.
+        escalation_trigger = self._evaluate_dynamic_risk(
+            proposal, action_type_id, auth_level
         )
 
         if escalation_trigger is not None:
