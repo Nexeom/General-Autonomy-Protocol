@@ -18,6 +18,7 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from gap_kernel import __version__
 from gap_kernel._time import utcnow
 from gap_kernel.crypto.signing import PublicKeyRegistry
 from gap_kernel.client.governance_client import SubprocessGovernanceClient
@@ -181,7 +182,7 @@ def create_app(
     app = FastAPI(
         title="GAP Kernel API",
         description="General Autonomy Protocol — Kernel Prototype",
-        version="0.1.0-alpha",
+        version=__version__,
     )
 
     # Initialize components

@@ -20,7 +20,7 @@
 
 ## Status
 
-GAP is a specification plus a Python reference implementation, at `v0.1.0-alpha`.
+GAP is a specification plus a Python reference implementation, at `v0.2.0-alpha`.
 Concretely:
 
 - **550 tests pass.** CI runs them on Python 3.11 / 3.12 / 3.13 and on Windows,

@@ -18,7 +18,7 @@
 
 None of the phases below has shipped. As of this revision:
 
-- There is **no tagged release**. The package version is `0.1.0-alpha`.
+- There is **no tagged release**. The package version is `0.2.0-alpha`.
 - There are **no known adopters** and no published implementation reports. The
   "early adopters" in Phase 1 are a plan, not a population.
 - **No RGAP adapter exists** — for LangGraph or any other framework. RGAP is

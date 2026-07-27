@@ -3,7 +3,7 @@
 ## Project status — read this first
 
 GAP is a **pre-release reference implementation**. `pyproject.toml` declares
-version `0.1.0-alpha`. There are no tagged releases, no published packages, and
+version `0.2.0-alpha`. There are no tagged releases, no published packages, and
 no external security review. The repository has one author.
 
 The governance kernel enforces real controls — kernel-signed decisions,
@@ -67,7 +67,7 @@ exactly one supported thing: the `main` branch.
 
 | Version | Status | Receives security fixes |
 |---|---|---|
-| `main` (currently `0.1.0-alpha`) | Active development; the only supported target | Yes — fixes land here |
+| `main` (currently `0.2.0-alpha`) | Active development; the only supported target | Yes — fixes land here |
 | Any fork, vendored copy, or checkout of an older commit | Unsupported | No — rebase onto `main` |
 
 Supported runtime: **Python 3.11+**, per `requires-python` in `pyproject.toml`.
