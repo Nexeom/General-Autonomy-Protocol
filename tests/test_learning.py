@@ -2,7 +2,6 @@
 
 from datetime import datetime
 
-import pytest
 
 from gap_kernel.learning.engine import LearningEngine
 from gap_kernel.models.governance import GovernanceDecision, GovernanceVerdict

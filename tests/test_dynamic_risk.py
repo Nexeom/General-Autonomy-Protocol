@@ -12,26 +12,17 @@ Test cases:
 8. External signal processing triggers appropriate escalation
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
-import pytest
 
 from gap_kernel.governance.dynamic_risk import (
     DynamicRiskEngine,
     EscalationConfig,
-    EscalationTrigger,
     EscalationTriggerType,
 )
 from gap_kernel.governance.kernel import GovernanceKernel
-from gap_kernel.models.governance import (
-    AuthorizationLevel,
-    GovernanceVerdict,
-)
 from gap_kernel.models.intent import (
-    Constraint,
-    ConstraintType,
     IntentVector,
-    PolicyActivation,
 )
 from gap_kernel.models.strategy import PlannedAction, StrategyProposal
 from gap_kernel.models.world import WorldModel

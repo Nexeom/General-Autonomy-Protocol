@@ -17,14 +17,12 @@ import pytest
 from gap_kernel.execution.fabric import ExecutionFabric
 from gap_kernel.governance.kernel import (
     GovernanceKernel,
-    _build_uncertainty_declaration,
     _determine_auth_level,
     _determine_auth_tier,
 )
 from gap_kernel.models.governance import (
     ActionTypeSpec,
     AuthorizationLevel,
-    GovernancePhaseResult,
     GovernanceVerdict,
     PhaseConfig,
     RiskProfile,
@@ -34,12 +32,11 @@ from gap_kernel.models.intent import (
     Constraint,
     ConstraintType,
     IntentVector,
-    PolicyActivation,
 )
 from gap_kernel.models.lineage import ArtifactProvenance, LineageRecord
 from gap_kernel.models.strategy import PlannedAction, StrategyProposal
 from gap_kernel.models.world import EntityState, WorldModel
-from gap_kernel.strategy.cga_loop import CGALoop, RuleBasedStrategyGenerator
+from gap_kernel.strategy.cga_loop import CGALoop
 
 
 # ---------------------------------------------------------------------------

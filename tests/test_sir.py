@@ -9,7 +9,6 @@ from gap_kernel.governance.sir import StandingIntentError, StructuredIntentResol
 from gap_kernel.models.governance import AuthorizationLevel
 from gap_kernel.models.sir import (
     ConfirmationState,
-    IntentDeclaration,
     MetaIntent,
     StandingIntentDeclaration,
 )

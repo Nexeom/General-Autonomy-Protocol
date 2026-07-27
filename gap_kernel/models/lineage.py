@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from gap_kernel.models.governance import GovernanceDecision, UncertaintyDeclaration
 from gap_kernel.models.intent import IntentVector

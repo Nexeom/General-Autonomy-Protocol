@@ -17,7 +17,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from uuid import uuid4
 
-from gap_kernel.models.governance import GovernanceDecision, GovernanceVerdict
+from gap_kernel.models.governance import GovernanceVerdict
 from gap_kernel.models.learning import OperationalHeuristic, PolicyProposal
 from gap_kernel.models.lineage import LineageRecord
 

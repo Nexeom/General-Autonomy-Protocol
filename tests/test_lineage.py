@@ -1,10 +1,8 @@
 """Tests for the Decision Lineage Store."""
 
 import hashlib
-import json
 from datetime import datetime
 
-import pytest
 
 from gap_kernel.crypto.signing import generate_keypair, sign, verify
 from gap_kernel.lineage.store import LineageStore

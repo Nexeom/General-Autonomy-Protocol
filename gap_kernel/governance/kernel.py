@@ -569,12 +569,10 @@ def _detect_intent_conflicts(
     intents: List[IntentVector],
 ) -> Optional[List[IntentVector]]:
     """Detect if the proposal creates conflicts between intents."""
-    serving_intent = None
     conflicting = []
 
     for intent in intents:
         if intent.id == proposal.intent_id:
-            serving_intent = intent
             continue
         if not intent.active:
             continue

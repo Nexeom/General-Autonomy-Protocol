@@ -18,7 +18,6 @@ This test exercises all validation criteria from Section 11.
 
 from datetime import datetime, timedelta
 
-import pytest
 
 from gap_kernel.execution.fabric import ExecutionFabric
 from gap_kernel.governance.kernel import GovernanceKernel

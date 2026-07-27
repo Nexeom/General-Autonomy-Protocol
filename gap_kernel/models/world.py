@@ -1,7 +1,7 @@
 """World Model — structured representation of operational reality."""
 
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from pydantic import BaseModel, Field
 

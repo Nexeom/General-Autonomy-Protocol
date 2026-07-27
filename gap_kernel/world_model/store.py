@@ -6,7 +6,7 @@ Queried by: Reconciler Loop + Strategy Layer
 """
 
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from gap_kernel.models.world import EntityState, WorldModel
 

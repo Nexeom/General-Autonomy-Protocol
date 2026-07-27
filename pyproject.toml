@@ -12,17 +12,17 @@ requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.0,<3.0",
     "croniter>=2.0,<7",
-    "cryptography>=42.0",
-    "fastapi>=0.110,<1.0",
-    "uvicorn[standard]>=0.27,<1.0",
-    "langgraph>=0.2,<1.0",
-    "langchain-core>=0.3,<1.0",
-    "langchain-anthropic>=0.3,<1.0",
-    "langchain-openai>=0.3,<1.0",
+    "cryptography>=42.0,<47",
 ]
 
 [project.optional-dependencies]
+# The REST surface is optional: the governance kernel core runs without it.
+api = [
+    "fastapi>=0.110,<1.0",
+    "uvicorn[standard]>=0.27,<1.0",
+]
 dev = [
+    "gap-kernel[api]",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "httpx>=0.27",
@@ -45,6 +45,15 @@ omit = ["*/__init__.py"]
 
 [tool.coverage.report]
 show_missing = true
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+# Pyflakes catches undefined names and unused imports — the class of defect a
+# governance kernel cannot afford to ship. Style rules stay advisory for now.
+select = ["E9", "F"]
 
 [tool.setuptools.packages.find]
 include = ["gap_kernel*"]

@@ -2,7 +2,6 @@
 
 from datetime import datetime, timedelta
 
-import pytest
 
 from gap_kernel.execution.fabric import ExecutionFabric
 from gap_kernel.governance.integrity_monitor import GovernanceIntegrityMonitor

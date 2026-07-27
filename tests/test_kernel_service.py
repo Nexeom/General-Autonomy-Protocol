@@ -159,7 +159,6 @@ def test_subprocess_client_call_times_out():
 
 # --- governed kernel out of process (default isolation, G-2) ----------------
 
-from datetime import timedelta  # noqa: E402
 
 from gap_kernel.crypto.signing import PublicKeyRegistry, generate_keypair  # noqa: E402
 from gap_kernel.governance.profile import ApplicabilityProfile, sign_profile  # noqa: E402

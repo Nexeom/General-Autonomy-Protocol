@@ -43,22 +43,26 @@ cd General-Autonomy-Protocol
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install in development mode
-pip install -e .
+# Install in development mode, with the test dependencies
+pip install -e ".[dev]"
 
 # Run the test suite
 pytest tests/ -v
 
-# All 111 tests should pass before you submit a PR
+# All 381 tests should pass before you submit a PR
 ```
 
 ## Code Standards
 
 - **Python 3.11+** required
 - **Pydantic** for all data models — typed, validated, serializable
-- **LangGraph** for state machine implementations
 - **Type hints** on all function signatures
 - Clear docstrings on public APIs
+- **Minimal dependencies.** The kernel is the trusted component; every runtime
+  dependency is code that runs in the process holding the signing key. The core
+  depends only on `pydantic`, `croniter`, and `cryptography`. Adding a runtime
+  dependency needs justification in the PR.
+- `ruff check gap_kernel/ tests/` must pass
 
 ## Protocol Governance
 

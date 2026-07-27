@@ -32,10 +32,7 @@ from gap_kernel.governance.profile import ApplicabilityProfile
 logger = logging.getLogger("gap_kernel.api")
 from gap_kernel.learning.engine import LearningEngine
 from gap_kernel.lineage.store import LineageStore
-from gap_kernel.models.governance import GovernanceDecision
 from gap_kernel.models.intent import IntentVector
-from gap_kernel.models.learning import OperationalHeuristic, PolicyProposal
-from gap_kernel.models.lineage import LineageRecord
 from gap_kernel.models.reconciler import ReconcilerConfig
 from gap_kernel.models.strategy import StrategyProposal
 from gap_kernel.models.world import EntityState

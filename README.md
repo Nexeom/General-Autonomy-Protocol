@@ -10,6 +10,7 @@
     <a href="CONTRIBUTING.md">Contributing</a>
   </p>
   <p align="center">
+    <a href="https://github.com/Nexeom/General-Autonomy-Protocol/actions/workflows/ci.yml"><img src="https://github.com/Nexeom/General-Autonomy-Protocol/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License"></a>
     <a href="https://github.com/Nexeom/General-Autonomy-Protocol/stargazers"><img src="https://img.shields.io/github/stars/Nexeom/General-Autonomy-Protocol?style=social" alt="Stars"></a>
   </p>
@@ -154,12 +155,15 @@ Compliance      →  NIST AI RMF, ISO 42001, EU AI Act
 git clone https://github.com/Nexeom/General-Autonomy-Protocol.git
 cd General-Autonomy-Protocol
 
-# Install dependencies
-pip install -e .
+# Install with the test dependencies
+pip install -e ".[dev]"
 
 # Run the test suite
 pytest tests/ -v
 ```
+
+The kernel core depends only on `pydantic`, `croniter`, and `cryptography`. The
+REST surface is an optional extra (`pip install -e ".[api]"`).
 
 ## Project Structure
 

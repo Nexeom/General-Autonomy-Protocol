@@ -248,7 +248,7 @@ class TestFullAPIScenario:
         # 3. Trigger reconciliation
         reconcile_response = client.post("/reconciler/trigger")
         assert reconcile_response.status_code == 200
-        reconcile_data = reconcile_response.json()
+        reconcile_response.json()
 
         # 4. Inspect lineage
         lineage_response = client.get("/lineage")

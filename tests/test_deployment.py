@@ -6,7 +6,7 @@ SIR gate) are forced on. A governed deployment refuses to run without its floor
 or without a resolved intent.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pytest
 

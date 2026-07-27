@@ -14,7 +14,7 @@ LLM-powered strategy generation.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Protocol
+from typing import Callable, List, Optional, Protocol
 from uuid import uuid4
 
 from gap_kernel.errors import GovernanceConfigError
@@ -28,7 +28,6 @@ from gap_kernel.governance.sir import StructuredIntentResolver
 from gap_kernel.models.execution import ExecutionResult
 from gap_kernel.models.sir import IntentDeclaration, StandingIntentDeclaration
 from gap_kernel.models.governance import (
-    AuthorizationLevel,
     GovernanceDecision,
     GovernanceVerdict,
 )
@@ -629,7 +628,6 @@ class CGAResult:
         now = datetime.utcnow()
 
         # Detect conflict resolution info
-        conflicting = None
         deprioritized = None
         deprioritization_rationale = None
         priority_override = False

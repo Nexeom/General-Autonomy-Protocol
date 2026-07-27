@@ -2,7 +2,6 @@
 
 from datetime import datetime
 
-import pytest
 
 from gap_kernel.execution.fabric import ExecutionFabric
 from gap_kernel.governance.kernel import GovernanceKernel
@@ -11,10 +10,9 @@ from gap_kernel.models.intent import (
     Constraint,
     ConstraintType,
     IntentVector,
-    PolicyActivation,
 )
 from gap_kernel.models.world import EntityState, WorldModel
-from gap_kernel.strategy.cga_loop import CGALoop, RuleBasedStrategyGenerator
+from gap_kernel.strategy.cga_loop import CGALoop
 
 
 def _make_eu_lead_world(consent: bool = False) -> WorldModel:
@@ -263,10 +261,15 @@ class TestCGALoop:
 
         # Each subsequent proposal should be different from the first
         if len(result.proposals) > 1:
-            first_actions = {a.action_type for a in result.proposals[0].actions}
-            last_actions = {a.action_type for a in result.proposals[-1].actions}
-            # The proposals should evolve (not be identical retries)
-            assert result.proposals[0].id != result.proposals[-1].id
+            first = result.proposals[0]
+            last = result.proposals[-1]
+            assert first.id != last.id
+            # Replanning must change the plan, not just re-stamp it: either the
+            # action types or their parameters have to differ, or the loop is
+            # retrying rather than replanning under the accumulated constraints.
+            first_actions = [(a.action_type, a.parameters) for a in first.actions]
+            last_actions = [(a.action_type, a.parameters) for a in last.actions]
+            assert first_actions != last_actions
 
     def test_lineage_record_from_result(self):
         """CGA result should produce a complete lineage record."""

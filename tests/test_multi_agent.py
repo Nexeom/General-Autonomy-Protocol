@@ -64,7 +64,7 @@ def test_delegation_cannot_route_around_escalation():
     reg = SubAgentRegistry(root_ceiling=AL.L1, root_constraints=set())
     assert reg.authorize("root", AL.L1) is True
     assert reg.authorize("root", AL.L3) is False     # root must escalate L3
-    child = reg.register("worker", parent_id="root")
+    reg.register("worker", parent_id="root")
     assert reg.authorize("worker", AL.L3) is False    # child must escalate too
     with pytest.raises(SubAgentViolation):
         reg.register("privileged", parent_id="root", requested_ceiling=AL.L4)

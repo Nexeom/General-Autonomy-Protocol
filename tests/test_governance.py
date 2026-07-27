@@ -2,7 +2,6 @@
 
 from datetime import datetime
 
-import pytest
 
 from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.models.governance import GovernanceVerdict
