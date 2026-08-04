@@ -23,7 +23,7 @@
 GAP is a specification plus a Python reference implementation, at `v0.2.0-alpha`.
 Concretely:
 
-- **550 tests pass.** CI runs them on Python 3.11 / 3.12 / 3.13 and on Windows,
+- **639 tests pass.** CI runs them on Python 3.11 / 3.12 / 3.13 and on Windows,
   and fails the build under 90% line coverage (measured: 93%). A separate CI job
   runs the exact commands in [Getting Started](#getting-started), so the
   documented install path breaks the build when it breaks.
@@ -170,7 +170,7 @@ deployment-configured.
 | **Action Type Registry** | Governance configuration per action category, carried **inside the signed Applicability Profile**. 5 baseline types. A governed kernel refuses runtime registration; an open/prototype kernel treats the call as a monotonic ratchet — a type may be added, never replaced, and never below the floor its own risk profile implies. |
 | **Multi-Phase Authorization** | Authorizing intent does not pre-authorize outcome. Independent governance gates at each lifecycle phase. |
 | **Single-Use Authorization** | A signed decision authorizes one execution. The `ExecutionLedger` claims its nonce before dispatch at every level (L0–L4), L2+ human approvals are reserved before dispatch in a separate ledger, and per-action completion tracking means a retry resumes rather than repeating a side effect. A governed deployment requires **durable** ledgers by default — in-memory replay protection evaporates on restart. |
-| **Attested World Model** | Governance-relevant properties (GDPR consent, geography, jurisdiction, local hour) carry store-stamped provenance. A governed kernel treats an unattested value as unevaluable and therefore a violation, so an unauthenticated write cannot flip consent or rewrite jurisdiction to buy an approval. |
+| **Signed Evidence Attestation** | Governance-relevant properties (GDPR consent, geography, jurisdiction, local hour) require an Ed25519 signature by a registered issuer binding the entity, the exact values, the window and the issuer key id. The kernel verifies it itself against issuers resolved from the trust root, and compares values as canonical JSON — a signature over `1` does not certify `True`. An unverifiable value is unevaluable and therefore a violation. **This hardens 2 of the 9 evaluators** — the two that read the world model — and what it is worth depends on the deployment: if the issuer private key sits beside the agent, the agent mints its own consent. It proves an issuer *asserted* a fact, not that the fact is true, and there is no revocation, so replay is bounded by a max-age ceiling rather than closed. |
 | **The Reconciler** | Continuous state reconciliation against declared intents. Detects drift and acts. Per-entity exception containment (one malformed entity cannot kill the heartbeat), an observable and resettable circuit breaker, and a `last_contacted` field protected from arbitrary writes that would silence drift detection. |
 | **Output Artifact Provenance** | 📋 **Planned.** `ArtifactProvenance` (integrity hash, validation evidence, quality uncertainty) is defined as a model and hangs off `LineageRecord`, but no shipped path populates it — it is constructed only in tests. |
 | **Separation of Creation and Validation** | 📋 **Planned.** `ArtifactProvenance.validation_independent` is a self-declared boolean defaulting to `False`. Nothing verifies that the validating entity is independent of the producer, and nothing rejects a self-validated artifact. |
@@ -272,13 +272,13 @@ General-Autonomy-Protocol/
 │   ├── service/kernel_server.py # The out-of-process kernel: read-only RPC over stdio, trust-root resolution
 │   ├── strategy/cga_loop.py     # Strategy Layer — CGA loop + rule-based strategy generator
 │   ├── verification/            # Execution and OOB replay ledgers — single-use decisions
-│   ├── world_model/             # World Model store — attested evidence provenance
+│   ├── world_model/             # World Model store + signed evidence attestation
 │   ├── _time.py                 # Timezone-aware UTC helpers
 │   ├── errors.py
 │   └── __init__.py
 ├── docs/                        # Specification, Conformance Statement, remediation plan, design notes, audits
 ├── action-types/                # Action type definitions in Markdown
-├── tests/                       # 550 tests incl. property-based fuzzing; CI fails under 90% coverage
+├── tests/                       # 639 tests incl. property-based fuzzing; CI fails under 90% coverage
 ├── .github/workflows/ci.yml     # Matrix 3.11–3.13 + Windows, coverage floor, README quickstart, ruff
 ├── pyproject.toml               # Project metadata and dependencies
 ├── LICENSE                      # Apache 2.0

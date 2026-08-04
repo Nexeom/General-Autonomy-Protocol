@@ -6,41 +6,49 @@ Queried by: Reconciler Loop + Strategy Layer
 
 Part of what it carries is not telemetry but EVIDENCE: the Governance Kernel's
 constraint evaluators rule on a lead's jurisdiction, its GDPR consent and its
-local hour, so whatever can write those facts decides the verdict. Those keys
-are declared here and only count as evidence when they arrive through a channel
-the deployment has declared attested; the store is their sole provenance writer.
+local hour, so whatever can write those facts decides the verdict.
 
-Scope of that guarantee, stated bluntly: **the provenance record is a plain
-field, not a signature, so it is forgeable and this store is not where the
-guarantee lives.** It stops every writer that goes through the store — an
-anonymous HTTP ingest, an executor's write-back, a merge carrying a supplied
-stamp — and it is downgrade-only, so such a write can turn an approval into a
-rejection but never the reverse.
+**This store is not where that guarantee lives, and it never was.** It sees only
+the writers that go through it; a caller that assembles the ``WorldModel`` itself
+never does. In the isolated posture the agent legitimately authors the whole
+``world_state`` field of an ``evaluate`` request, so anything this store refuses
+to write can simply be written on the other side of the boundary instead.
 
-It does NOT stop a caller that assembles the ``WorldModel`` itself. That is not
-an exotic case: in the isolated posture the agent legitimately authors the whole
-``world_state`` field of an ``evaluate`` request, and ``model_validate``
-reconstructs the stamp from that JSON without it ever passing through this
-store. A hand-written ``{"attested": True, "governance_properties": [...]}``
-therefore reads as attested to the kernel. This needs no code execution — it is
-reachable through the boundary's own published interface by any party that can
-supply data.
+So the store no longer tries. Trust is a signature now
+(``gap_kernel.world_model.attestation``), verified by the kernel against an
+issuer registry the kernel resolved from its trust root. The store's two jobs
+here are both modest and both honest:
 
-Closing it requires the evidence to be signed by a key the agent side does not
-hold, and verified by the kernel rather than read off the entity.
+  * **Carry** whatever ``_evidence_attestation`` blob a writer supplies, verbatim,
+    after a shape check. In production the blob is minted OUTSIDE this process by
+    the source of record, and the store cannot verify it — carrying an
+    unverifiable blob is safe precisely because verification is entirely
+    kernel-side. This inverts the old behaviour, which discarded a supplied
+    stamp; discarding was necessary only while the stamp itself was the decision.
+  * **Record** which declared channel last wrote a governance-relevant fact, and
+    log every change to one. That is an audit trail. It decides nothing.
+
+An :class:`EvidenceChannel` may carry an in-process signer for the prototype
+path. Read :class:`gap_kernel.world_model.attestation.InProcessEvidenceSigner`
+before using it: if the agent process can sign, the mechanism is theatre.
 """
 
 import logging
-from typing import Any, Dict, Iterable, List, Optional, Set
+from typing import Any, Dict, Iterable, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError, model_validator
 
 from gap_kernel._time import utcnow
 from gap_kernel.models.world import (
+    EVIDENCE_ATTESTATION_PROPERTY as _EVIDENCE_ATTESTATION_PROPERTY,
     EVIDENCE_PROPERTY as _EVIDENCE_PROPERTY,
     GOVERNANCE_RELEVANT_PROPERTIES as _GOVERNANCE_RELEVANT_PROPERTIES,
     EntityState,
     WorldModel,
+)
+from gap_kernel.world_model.attestation import (
+    EvidenceAttestation,
+    InProcessEvidenceSigner,
 )
 
 logger = logging.getLogger("gap_kernel.world_model")
@@ -52,17 +60,21 @@ logger = logging.getLogger("gap_kernel.world_model")
 #   geo / jurisdiction    -> _check_gdpr_consent (which jurisdiction applies)
 #   local_hour            -> _check_contact_hours
 # A key added to a world-model-backed evaluator belongs here too, otherwise the
-# kernel would rule on a fact nobody vouched for.
-# Both are defined on the model (gap_kernel.models.world) so that the properties
-# themselves can defend the invariant: a direct write to a governance-relevant
-# key revokes its attested standing wherever that write comes from, not only on
-# the paths this store owns.
+# kernel would rule on a fact nobody vouched for. This set is HAND-MAINTAINED and
+# its failure mode is fail-OPEN, so
+# ``tests/test_evidence_attestation.py::test_every_property_an_evaluator_reads_is_governance_relevant``
+# re-derives it from the evaluators' own source.
+# It is defined on the model (gap_kernel.models.world) rather than here because
+# both the store and the attestation verifier need it, and neither owns it.
 GOVERNANCE_RELEVANT_PROPERTIES = _GOVERNANCE_RELEVANT_PROPERTIES
 
-# The reserved property carrying an entity's evidence provenance. The store is
-# its only *attesting* writer: a caller-supplied value is discarded before every
-# write, so an anonymous ingest cannot declare its own facts attested.
+# The reserved property carrying the store's channel breadcrumb. Audit only —
+# no kernel code reads it and it cannot make a fact usable.
 EVIDENCE_PROPERTY = _EVIDENCE_PROPERTY
+
+# The reserved property carrying the SIGNED attestation. The store carries it;
+# only the kernel verifies it.
+EVIDENCE_ATTESTATION_PROPERTY = _EVIDENCE_ATTESTATION_PROPERTY
 
 # The channel a write arrives on when none is declared. Naming it keeps an
 # unattested write auditable rather than silent.
@@ -79,14 +91,34 @@ class EvidenceChannel(BaseModel):
     """A declared source for governance-relevant world-model facts.
 
     ``attested`` is the deployment's assertion that this channel authenticates
-    what it reports — a consent-of-record system, a signed regulatory feed. An
-    anonymous HTTP POST is a channel like any other; it simply is not an attested
-    one, and facts arriving on it cannot satisfy a HARD constraint.
+    what it reports. On its own that assertion buys NOTHING at the kernel: a
+    governed kernel accepts a signed attestation or it accepts nothing, and this
+    flag is now audit metadata on the mutation log.
+
+    ``signer`` is the prototype bridge. When set, the store mints a signed
+    attestation over the governance-relevant keys of every entity written on this
+    channel. Read
+    :class:`gap_kernel.world_model.attestation.InProcessEvidenceSigner` first —
+    it holds a private key in the agent's address space, which is a development
+    convenience and not a boundary. The production shape is the opposite: the
+    source of record signs, and GAP receives a blob it can only verify.
     """
 
     channel_id: str
     attested: bool = False
     description: str = ""
+    signer: Optional[InProcessEvidenceSigner] = None
+
+    @model_validator(mode="after")
+    def _warn_if_attested_but_unsigned(self) -> "EvidenceChannel":
+        if self.attested and self.signer is None:
+            logger.warning(
+                "evidence channel '%s' declares attested=True but carries no "
+                "signer; a governed kernel verifies signatures and will treat "
+                "every fact written on this channel as unattested",
+                self.channel_id,
+            )
+        return self
 
 
 UNATTESTED = EvidenceChannel(
@@ -101,26 +133,21 @@ def governance_properties(properties: Dict[str, Any]) -> List[str]:
     return sorted(k for k in properties if k in GOVERNANCE_RELEVANT_PROPERTIES)
 
 
-def attested_properties(entity: EntityState) -> Set[str]:
-    """The governance-relevant keys on ``entity`` backed by attested provenance.
+def is_attestation_shaped(blob: Any) -> bool:
+    """True if ``blob`` parses as an :class:`EvidenceAttestation`.
 
-    Anything not in here is a fact the kernel has no attested source for. An
-    entity that never passed through the store — assembled by hand, or decoded
-    from an RPC payload that carried no stamp — returns the empty set, which is
-    the fail-closed answer.
+    A SHAPE check, deliberately not a trust check. The store cannot verify a
+    signature it has no issuer registry for, and should not pretend to: this
+    only keeps a malformed blob from being carried into the world model where it
+    would be noise in every snapshot.
     """
-    stamp = entity.properties.get(EVIDENCE_PROPERTY)
-    if not isinstance(stamp, dict) or not stamp.get("attested"):
-        return set()
-    declared = stamp.get("governance_properties")
-    if not isinstance(declared, (list, tuple, set)):
-        return set()
-    return {k for k in declared if k in GOVERNANCE_RELEVANT_PROPERTIES}
-
-
-def evidence_is_attested(entity: EntityState, property_name: str) -> bool:
-    """True if ``property_name`` on ``entity`` came through an attested channel."""
-    return property_name in attested_properties(entity)
+    if not isinstance(blob, dict):
+        return False
+    try:
+        EvidenceAttestation.model_validate(blob)
+    except ValidationError:
+        return False
+    return True
 
 
 class WorldModelStore:
@@ -148,19 +175,21 @@ class WorldModelStore:
     ) -> None:
         """Insert or update an entity in the world model.
 
-        Ordinary properties are stored as supplied. Governance-relevant ones are
-        stamped with the provenance they arrived under: without an attested
-        ``channel`` they are recorded UNATTESTED, and a governed kernel refuses to
-        certify a constraint that depends on them. Every governance-relevant
-        change is recorded, so a consent flip is at minimum auditable.
+        Ordinary properties are stored as supplied. A supplied
+        ``_evidence_attestation`` blob is CARRIED VERBATIM once it passes a shape
+        check — in production it is minted outside this process by the source of
+        record, and the store has no issuer registry to verify it with. That is
+        safe because verification happens entirely kernel-side: an unverifiable
+        blob buys its presenter nothing.
+
+        The store's own ``_evidence_provenance`` breadcrumb is rewritten on every
+        write, and every governance-relevant change is logged, so a consent flip
+        is at minimum auditable.
         """
         channel = channel or UNATTESTED
         properties = entity.properties
-        # Provenance is never caller-supplied — the stamp is the whole attack in
-        # one field, so anything that arrived under that key is discarded.
-        properties.pop(EVIDENCE_PROPERTY, None)
+        self._carry_attestation(entity, channel)
 
-        relevant = governance_properties(properties)
         previous = self._model.entities.get(entity.entity_id)
         self._record_mutations(
             entity_id=entity.entity_id,
@@ -168,7 +197,7 @@ class WorldModelStore:
             after=properties,
             channel=channel,
         )
-        self._stamp(entity, relevant if channel.attested else [], channel)
+        self._stamp(entity, channel)
         self._model.entities[entity.entity_id] = entity
 
     def get_entity(self, entity_id: str) -> Optional[EntityState]:
@@ -225,14 +254,24 @@ class WorldModelStore:
         """Apply execution result updates to an entity.
 
         This is a MERGE, so it is the path an executor's output takes into the
-        world model. A governance-relevant key written here carries only the
-        provenance of the channel that wrote it: an unattested outcome demotes
-        that key, and no outcome can upgrade one it did not supply.
+        world model. The write itself is allowed — what an executor cannot do is
+        make it count: changing a governance-relevant value leaves the entity's
+        signed attestation vouching for the OLD value, and the kernel's value
+        check fails. Restoring standing requires a new signature, which needs the
+        issuer key.
+
+        An execution result is never a source of record, so this path does NOT
+        mint an attestation even when the channel carries a signer. Minting here
+        would let an executor write a governance value and re-sign it in the same
+        call, which is the laundering this mechanism exists to stop — the signer
+        would be certifying the agent's own output back to the kernel.
         """
         entity = self._model.entities.get(entity_id)
         if not entity:
             return
         channel = channel or UNATTESTED
+        # The store owns its own breadcrumb; the attestation blob is carried,
+        # because a presenter gains nothing by carrying one it cannot sign.
         merged = {k: v for k, v in updates.items() if k != EVIDENCE_PROPERTY}
         written = governance_properties(merged)
 
@@ -243,30 +282,54 @@ class WorldModelStore:
             channel=channel,
             keys=written,
         )
-        still_attested = attested_properties(entity) - set(written)
-        if channel.attested:
-            still_attested |= set(written)
         entity.properties.update(merged)
         entity.last_updated = utcnow()
-        self._stamp(entity, sorted(still_attested), channel)
+        self._stamp(entity, channel)
 
     # --- Evidence provenance ------------------------------------------------
 
-    def _stamp(
-        self,
-        entity: EntityState,
-        attested: List[str],
-        channel: EvidenceChannel,
+    def _carry_attestation(
+        self, entity: EntityState, channel: EvidenceChannel
     ) -> None:
-        """Write the entity's provenance record, or none if it carries no
-        governance-relevant facts (nothing to vouch for)."""
+        """Keep a well-formed supplied attestation; mint one if the channel signs.
+
+        A channel's signer takes precedence, because a deployment that wired one
+        up wants the store's minted attestation and not whatever a caller
+        attached. A malformed blob is dropped with a warning — it could never
+        verify, and carrying it would only put noise in every world-state
+        snapshot.
+        """
+        properties = entity.properties
+        if channel.signer is not None:
+            properties[EVIDENCE_ATTESTATION_PROPERTY] = channel.signer.mint(
+                entity.entity_id, properties
+            ).model_dump(mode="json")
+            return
+        supplied = properties.get(EVIDENCE_ATTESTATION_PROPERTY)
+        if supplied is None:
+            return
+        if not is_attestation_shaped(supplied):
+            properties.pop(EVIDENCE_ATTESTATION_PROPERTY, None)
+            logger.warning(
+                "discarded a malformed evidence attestation on %s (channel %s); "
+                "it could not have verified",
+                entity.entity_id, channel.channel_id,
+            )
+
+    def _stamp(self, entity: EntityState, channel: EvidenceChannel) -> None:
+        """Record WHICH channel last wrote this entity's governance-relevant facts.
+
+        An audit breadcrumb. Nothing in the kernel reads it, and it cannot make a
+        fact usable — that is exactly the mistake it used to embody. Removed when
+        the entity carries no governance-relevant facts, so ordinary telemetry
+        stays unstamped.
+        """
         if not governance_properties(entity.properties):
             entity.properties.pop(EVIDENCE_PROPERTY, None)
             return
         entity.properties[EVIDENCE_PROPERTY] = {
             "channel": channel.channel_id,
-            "attested": bool(attested),
-            "governance_properties": list(attested),
+            "governance_properties": governance_properties(entity.properties),
             "recorded_at": utcnow().isoformat(),
         }
 

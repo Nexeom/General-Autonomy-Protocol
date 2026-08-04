@@ -18,15 +18,18 @@ from gap_kernel.governance.profile import ApplicabilityProfile, sign_profile
 from gap_kernel.models.intent import Constraint, ConstraintType, IntentVector
 from gap_kernel.models.strategy import PlannedAction, StrategyProposal
 from gap_kernel.models.world import EntityState, WorldModel
-from gap_kernel.world_model.store import (
-    EvidenceChannel,
-    WorldModelStore,
-    evidence_is_attested,
+from gap_kernel.world_model.store import WorldModelStore
+from tests.conftest import EVIDENCE_AUTHORITY
+
+# The shared issuer (tests/conftest.py): an attested channel now signs what it
+# writes, and the kernel verifies that signature against the issuer's public key.
+ATTESTED_CRM = EVIDENCE_AUTHORITY.channel(
+    channel_id="crm", description="system of record"
 )
 
-ATTESTED_CRM = EvidenceChannel(
-    channel_id="crm", attested=True, description="system of record"
-)
+# The kernel builds one of these itself; a test needs one to assert on standing
+# directly, since there is no longer a pure function that reads it off an entity.
+VERIFIER = EVIDENCE_AUTHORITY.verifier()
 
 
 def _governed_kernel() -> GovernanceKernel:
@@ -41,6 +44,7 @@ def _governed_kernel() -> GovernanceKernel:
     return GovernanceKernel(
         applicability_profile=profile,
         profile_key_registry=PublicKeyRegistry({"regulatory_authority": pub}),
+        evidence_issuers=EVIDENCE_AUTHORITY.registry(),
     )
 
 
@@ -87,13 +91,17 @@ def _proposal(pid, action_type, parameters, risk, requires_consent):
 class TestEvidenceLaunderingThroughExecution:
     """An agent must not be able to attest its own facts by acting on them.
 
-    `WorldModelStore` refuses to let a caller declare its own evidence attested,
-    but the Execution Fabric's `update_record` executor writes results straight
-    onto `entity.properties` without going through the store. That left the
-    provenance stamp in place, still vouching for a value it never saw — so an
+    The Execution Fabric's `update_record` executor writes results straight onto
+    `entity.properties` without going through the store, which left the old
+    provenance stamp in place still vouching for a value it never saw — so an
     agent could launder its own consent in one governed, fully-signed step:
     ingest an attested `gdpr_consent=False`, run one approved `update_record`
     setting it True, and the previously-rejected outreach is approved.
+
+    Signed Evidence Attestation closes it by construction rather than by
+    bookkeeping: the signature binds the VALUE, so a write that changes the value
+    leaves the attestation vouching for the old one and the kernel's value check
+    fails. Restoring standing takes a new signature, which takes the issuer key.
     """
 
     def _setup(self):
@@ -143,7 +151,7 @@ class TestEvidenceLaunderingThroughExecution:
         assert entity.properties["gdpr_consent"] is True, (
             "the write itself is allowed; what it must lose is attested standing"
         )
-        assert not evidence_is_attested(entity, "gdpr_consent")
+        assert not VERIFIER.attests(entity, "gdpr_consent")
 
         after = self._evaluate(
             kernel, intent, world, _proposal("out_2", "send_email", {}, 3, True)
@@ -157,7 +165,7 @@ class TestEvidenceLaunderingThroughExecution:
         store, kernel, intent = self._setup()
         world = store.model
         world.entities["lead_eu_1"].properties["gdpr_consent"] = True
-        assert not evidence_is_attested(world.entities["lead_eu_1"], "gdpr_consent")
+        assert not VERIFIER.attests(world.entities["lead_eu_1"], "gdpr_consent")
 
         store.upsert_entity(
             EntityState(
@@ -170,7 +178,7 @@ class TestEvidenceLaunderingThroughExecution:
             ),
             channel=ATTESTED_CRM,
         )
-        assert evidence_is_attested(store.model.entities["lead_eu_1"], "gdpr_consent")
+        assert VERIFIER.attests(store.model.entities["lead_eu_1"], "gdpr_consent")
         approved = self._evaluate(
             kernel, intent, store.model, _proposal("out_3", "send_email", {}, 3, True)
         )
@@ -180,8 +188,8 @@ class TestEvidenceLaunderingThroughExecution:
         store, _, _ = self._setup()
         entity = store.model.entities["lead_eu_1"]
         entity.properties["lead_score"] = 91
-        assert evidence_is_attested(entity, "gdpr_consent")
-        assert evidence_is_attested(entity, "geo")
+        assert VERIFIER.attests(entity, "gdpr_consent")
+        assert VERIFIER.attests(entity, "geo")
 
 
 class TestConcurrentReplay:
@@ -278,3 +286,66 @@ class TestConcurrentReplay:
         ledger.begin("n3", decision_id="d1", proposal_id="p1")
         with pytest.raises(ExecutionReplayError, match="in flight"):
             ledger.begin("n3", decision_id="d1", proposal_id="p1")
+
+
+class TestExecutorCannotReSignItsOwnOutput:
+    """A signing channel must not turn an executor's write into evidence.
+
+    `update_from_execution` is the path an executor's output takes into the
+    world model. It used to re-mint the entity's attestation whenever the
+    channel carried a signer, so a deployment that wired a signing channel got
+    the laundering back in one call: the executor wrote `gdpr_consent=True` and
+    the same call re-signed it, certifying the agent's own output back to the
+    kernel. An execution result is never a source of record.
+    """
+
+    def _store_with_attested_lead(self):
+        store = WorldModelStore()
+        store.upsert_entity(
+            EntityState(
+                entity_type="lead",
+                entity_id="lead_eu_1",
+                properties={"geo": "DE", "gdpr_consent": False},
+                last_updated=utcnow(),
+                source="crm",
+                obligations=[],
+            ),
+            channel=ATTESTED_CRM,
+        )
+        return store
+
+    def test_a_signing_channel_does_not_re_mint_on_execution_writeback(self):
+        store = self._store_with_attested_lead()
+        entity = store.model.entities["lead_eu_1"]
+        # Positive control: the honest ingest really did produce attested evidence.
+        assert VERIFIER.attests(entity, "gdpr_consent")
+
+        store.update_from_execution(
+            "lead_eu_1", {"gdpr_consent": True}, channel=ATTESTED_CRM
+        )
+
+        entity = store.model.entities["lead_eu_1"]
+        assert entity.properties["gdpr_consent"] is True, "the write is still allowed"
+        assert not VERIFIER.attests(entity, "gdpr_consent"), (
+            "an executor re-signing its own output is the laundering path"
+        )
+
+    def test_the_source_of_record_can_still_attest_the_new_value(self):
+        # De-attestation must be recoverable through the ingest path, or a
+        # legitimate consent update would be permanently unusable.
+        store = self._store_with_attested_lead()
+        store.update_from_execution(
+            "lead_eu_1", {"gdpr_consent": True}, channel=ATTESTED_CRM
+        )
+        store.upsert_entity(
+            EntityState(
+                entity_type="lead",
+                entity_id="lead_eu_1",
+                properties={"geo": "DE", "gdpr_consent": True},
+                last_updated=utcnow(),
+                source="crm",
+                obligations=[],
+            ),
+            channel=ATTESTED_CRM,
+        )
+        assert VERIFIER.attests(store.model.entities["lead_eu_1"], "gdpr_consent")

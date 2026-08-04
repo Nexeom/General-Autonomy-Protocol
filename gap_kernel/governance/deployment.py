@@ -97,6 +97,7 @@ def build_governed_deployment(
     applicability_profile: ApplicabilityProfile,
     world_model: WorldModel,
     profile_key_registry: Optional[PublicKeyRegistry] = None,
+    evidence_issuers: Optional[PublicKeyRegistry] = None,
     ledger_dir: Optional[str] = None,
     require_independent_trust_root: bool = True,
     allow_ephemeral_ledgers: bool = False,
@@ -120,6 +121,14 @@ def build_governed_deployment(
 
       - the kernel verifies the signed floor against the trust root's keys and
         runs in governed mode (strict action typing on);
+      - the kernel verifies Signed Evidence Attestations against the trust root's
+        ``evidence_issuers``, and against ``evidence_issuers`` here only when no
+        trust root is in force. A deployment that names none accepts no
+        attestation, so every world-model-backed constraint is unevaluable and
+        therefore violated — fail-closed, and loud in the log at construction.
+        This hardens the TWO evaluators that read the world model
+        (``gdpr_consent_required``, ``no_contact_outside_hours``); the other
+        seven rule on agent-authored action parameters and are unaffected;
       - the trust root is resolved from ``GAP_TRUST_ROOT`` — a path the DEPLOYER
         owns — rather than from ``profile_key_registry``, which is authored by
         the same process that authors the profile and therefore verifies any
@@ -192,19 +201,24 @@ def build_governed_deployment(
                 applicability_profile,
                 PublicKeyRegistry() if trust_root is not None
                 else (profile_key_registry or PublicKeyRegistry()),
+                PublicKeyRegistry() if trust_root is not None
+                else (evidence_issuers or PublicKeyRegistry()),
             ),
             require_trust_root=require_independent_trust_root,
         )
     else:
         signing_key_hex = public_key_hex = None
         registry = profile_key_registry
+        issuers = evidence_issuers
         if trust_root is not None:
             registry = trust_root.profile_key_registry()
+            issuers = trust_root.evidence_issuer_registry()
             signing_key_hex, public_key_hex = trust_root.load_kernel_identity()
         kernel = GovernanceKernel(
             governed=True,
             applicability_profile=applicability_profile,
             profile_key_registry=registry,
+            evidence_issuers=issuers,
             signing_key_hex=signing_key_hex,
             public_key_hex=public_key_hex,
         )

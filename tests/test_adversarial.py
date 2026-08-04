@@ -75,15 +75,14 @@ from gap_kernel.models.strategy import PlannedAction, StrategyProposal
 from gap_kernel.models.world import EntityState, WorldModel
 from gap_kernel.strategy.cga_loop import CGALoop
 from gap_kernel.verification.execution_ledger import ExecutionLedger
-from gap_kernel.world_model.store import EvidenceChannel, WorldModelStore
+from gap_kernel.world_model.store import WorldModelStore
+from tests.conftest import EVIDENCE_AUTHORITY
 
 PROFILE_KEY_ID = "regulatory_authority_key"
 APPROVER = "human_approver_alice"
-CRM_OF_RECORD = EvidenceChannel(
-    channel_id="crm_of_record",
-    attested=True,
-    description="Consent-of-record system",
-)
+# The shared issuer (tests/conftest.py). An attested channel signs; the kernel
+# verifies. Declaring a channel attested buys nothing on its own any more.
+CRM_OF_RECORD = EVIDENCE_AUTHORITY.channel()
 
 
 # --- Shared scaffolding ------------------------------------------------------
@@ -134,6 +133,7 @@ def _governed_kernel(tier1=()) -> GovernanceKernel:
         governed=True,
         applicability_profile=profile,
         profile_key_registry=PublicKeyRegistry({PROFILE_KEY_ID: public_hex}),
+        evidence_issuers=EVIDENCE_AUTHORITY.registry(),
     )
 
 
@@ -433,9 +433,9 @@ def test_an_unattested_overwrite_cannot_upgrade_an_attested_fact():
     """Consent laundering by overwrite: the entity already carries an ATTESTED
     ``gdpr_consent=False`` from the consent-of-record system, so the attacker
     re-ingests the whole entity with the flag flipped, hoping the standing
-    provenance vouches for the new value. Attestation belongs to the write that
-    made it, so the overwrite downgrades the fact rather than inheriting its
-    standing, and the gate still has nothing it can certify."""
+    attestation vouches for the new value. The signature binds the value it was
+    issued over, and the re-ingest arrives on no channel that can sign, so the
+    gate still has nothing it can certify."""
     store = WorldModelStore()
 
     def _lead(consent):

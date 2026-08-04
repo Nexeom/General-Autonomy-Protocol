@@ -140,6 +140,7 @@ def create_app(
     reconciler_config: Optional[ReconcilerConfig] = None,
     applicability_profile: Optional[ApplicabilityProfile] = None,
     profile_key_registry: Optional[PublicKeyRegistry] = None,
+    evidence_issuers: Optional[PublicKeyRegistry] = None,
     reconciler_action_type_id: str = "drift_reconciliation",
     isolated: bool = True,
     enable_mutating_routes: bool = False,
@@ -152,6 +153,14 @@ def create_app(
     actions under ``reconciler_action_type_id``. Without a profile the app runs in
     OPEN mode (a loud warning is logged) — fine for prototyping/embedding, not for
     a production deployment that requires a regulatory floor.
+
+    ``evidence_issuers`` names the public keys allowed to sign a Signed Evidence
+    Attestation. A governed app that names none accepts no attestation, so the
+    two world-model-backed constraints (``gdpr_consent_required``,
+    ``no_contact_outside_hours``) are unevaluable and therefore always violated.
+    That is fail-closed and it WILL surprise a prototype; the kernel logs it at
+    construction. A production deployment resolves these from its trust root
+    instead, which is the only place the agent side cannot author them.
 
     In governed mode the kernel runs OUT OF PROCESS by default (``isolated=True``)
     behind ``SubprocessGovernanceClient`` — the app holds only the public key and
@@ -196,7 +205,7 @@ def create_app(
         # separate OS process; the app holds only this client.
         gk = governance_client = SubprocessGovernanceClient(
             governed_config=dump_governed_config(
-                applicability_profile, profile_key_registry
+                applicability_profile, profile_key_registry, evidence_issuers
             )
         )
     elif governed:
@@ -204,6 +213,7 @@ def create_app(
             governed=True,
             applicability_profile=applicability_profile,
             profile_key_registry=profile_key_registry,
+            evidence_issuers=evidence_issuers,
         )
     else:
         gk = GovernanceKernel()
@@ -362,11 +372,13 @@ def create_app(
 
             HTTP is NOT an attested evidence channel: this route names the source
             the caller claims, and nothing here can authenticate it. Ordinary
-            properties are stored as supplied; governance-relevant ones are
-            recorded unattested, and a governed kernel will not certify a
-            constraint that depends on them. Attested evidence is written by a
-            channel that can vouch for itself, through
-            ``WorldModelStore.upsert_entity(entity, channel=...)``.
+            properties are stored as supplied; governance-relevant ones arrive
+            with no signature, and a governed kernel will not certify a
+            constraint that depends on them.
+
+            Attested evidence carries a Signed Evidence Attestation minted by an
+            issuer whose key this process does not hold — the source of record
+            signs, GAP verifies. See ``gap_kernel.world_model.attestation``.
             """
             entity = EntityState(
                 entity_type=req.entity_type,

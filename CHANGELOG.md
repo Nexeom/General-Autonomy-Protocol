@@ -26,9 +26,21 @@ produced by the previous version do not verify against this one.
   `provision_trust_root()`, `load_trust_root()`, `TrustRoot`, and a kernel
   identity that persists across restarts so an auditor has a stable key to pin.
   `SubprocessGovernanceClient` pins the child to it.
-- Attested provenance in the world-model store — `EvidenceChannel`,
-  `attested_properties()`, `evidence_is_attested()`, and a readable log of every
-  governance-relevant mutation (`GET /world/evidence-mutations`).
+- **Signed Evidence Attestation** (`gap_kernel/world_model/attestation.py`) —
+  `EvidenceAttestation`, `sign_attestation()`, `verify_attestation()`,
+  `EvidenceVerifier` and `InProcessEvidenceSigner`. An Ed25519 signature by a
+  registered issuer binds one entity's governance-relevant values, its window,
+  and the issuing key id; the kernel verifies it against issuers resolved from
+  the trust root. Values are compared as canonical JSON, never with `==` —
+  `True == 1` in Python, and that difference is the boolean the GDPR gate turns
+  on.
+- `evidence_issuers` in the trust root (`provision_trust_root`, `load_trust_root`,
+  `TrustRoot.evidence_issuer_registry()`), and `GovernanceKernel(evidence_issuers=…)`
+  for the in-process posture. A trust root, where present, overrides anything the
+  agent-side config blob carries.
+- `EvidenceChannel` in the world-model store, plus an optional in-process signer
+  for the prototype path, and a readable log of every governance-relevant
+  mutation (`GET /world/evidence-mutations`).
 - `.github/workflows/ci.yml` — tests on Python 3.11–3.13 plus Windows, a 90%
   coverage floor, `ruff`, and a job that runs the README's exact quickstart
   commands so the documented install path cannot rot.
@@ -37,7 +49,7 @@ produced by the previous version do not verify against this one.
 - `SECURITY.md` rewritten as a real policy: reporting process, scope, response
   targets, safe harbour, and an honest status header.
 - An `[api]` optional extra, so the kernel core installs with three dependencies.
-- Test suite 389 → 550 tests, coverage 93%.
+- Test suite 389 → 639 tests, coverage 93%.
 
 ### Changed
 
@@ -98,8 +110,24 @@ produced by the previous version do not verify against this one.
   `send_email` proposal under a `gdpr_consent_required` HARD constraint is
   rejected; one more ingest with `gdpr_consent` true → the identical proposal
   returns APPROVED carrying a valid kernel signature. Governance-relevant
-  properties now require provenance stamped by the store, and a governed kernel
-  treats an unattested value as unevaluable — a violation.
+  properties now require a Signed Evidence Attestation the kernel verifies
+  itself, and a governed kernel treats an unverifiable value as unevaluable — a
+  violation.
+- **The evidence attestation stamp was an unsigned dict.** The first fix stamped
+  provenance in `WorldModelStore` and had the kernel read a boolean off the
+  entity. That guarded the ingest path and nothing else: a caller that assembles
+  the `WorldModel` itself never passes through the store, and in the isolated
+  posture the agent legitimately authors the whole `world_state` field of the
+  `evaluate` RPC request. Reproduced against a governed kernel, a hand-written
+  `{"attested": true, "governance_properties": ["gdpr_consent", "geo"]}` turned
+  `rejected ['gdpr_consent_required']` into `approved []` — **no code execution
+  required.** Evidence is now signed by an issuer key the agent side does not
+  hold and verified kernel-side against a registry resolved from the trust root.
+  What that buys is a property of the DEPLOYMENT: if the issuer private key sits
+  on the agent's host under the agent's OS user, the agent reads it and mints
+  whatever it likes. It hardens two of nine evaluators; it does not prove a
+  signed fact is true, does not close replay or staleness (the kernel's max-age
+  ceiling bounds them), and provides no revocation.
 - **The Action Type Registry could be overwritten.** `register_action_type`
   claimed autonomous systems could not register types and performed no check: a
   bare dict write that could silently replace a baseline type, so re-registering
@@ -196,18 +224,70 @@ produced by the previous version do not verify against this one.
    against it. To keep the old behaviour deliberately, construct the kernel with
    `GovernanceKernel(allow_untracked_targets=True)`.
 
-9. **Governance-relevant world-model properties require attested provenance in
+9. **Governance-relevant world-model properties require a SIGNED attestation in
    governed mode.** `gdpr_consent`, `geo`, `jurisdiction` and `local_hour` that
-   did not arrive on an attested channel are unevaluable, which is a violation —
-   the same verdict as a constraint with no registered evaluator.
-   *What to do:* write them through the store with a declared channel —
-   `store.upsert_entity(entity, channel=EvidenceChannel(channel_id="consent_of_record",
-   attested=True))` — where the `attested` flag is the deployment asserting that
-   channel authenticates what it reports. To keep the old behaviour
-   deliberately, construct the kernel with
+   are not covered by a valid Signed Evidence Attestation are unevaluable, which
+   is a violation — the same verdict as a constraint with no registered
+   evaluator.
+
+   The previous release accepted a plain `_evidence_provenance` dict on the
+   entity as proof of attestation, and the kernel read a boolean off it. That
+   was forgeable by anyone who could supply a `WorldModel` — which, in the
+   isolated posture, is the agent, because it authors the whole `world_state`
+   field of an `evaluate` request. Measured: `rejected ['gdpr_consent_required']`
+   became `approved []` with a hand-written stamp, no code execution required.
+   *What to do:* have the source of record sign an `EvidenceAttestation` over the
+   entity's governance-relevant values and attach it under
+   `_evidence_attestation`; register the issuer's PUBLIC key in the trust root's
+   `evidence_issuers` map (`provision_trust_root(dir, profile_keys,
+   evidence_issuers={...})`) or pass `GovernanceKernel(evidence_issuers=...)` in
+   process. To keep the old behaviour deliberately, construct the kernel with
    `GovernanceKernel(require_attested_evidence=False)`.
 
-10. **Runtime dependencies pruned and the REST surface moved to an extra.**
+   This hardens **two of the kernel's nine evaluators** — `gdpr_consent_required`
+   and `no_contact_outside_hours`, the only two that read the world model. The
+   other seven rule on agent-authored `action.parameters` / `estimated_cost` and
+   are unchanged.
+
+10. **A governed kernel with no evidence issuers rejects every world-model-backed
+    proposal.** `GovernanceKernel(governed=True, applicability_profile=...)` with
+    no `evidence_issuers` and no trust-root issuer map requires attestation and
+    has nothing that can verify one. This is correct fail-closed behaviour and it
+    will surprise prototype deployments; the kernel logs it loudly at
+    construction ("governed kernel has no evidence issuers; every
+    world-model-backed constraint will be unevaluable").
+    *What to do:* supply issuers, or pass `require_attested_evidence=False` for
+    prototyping.
+
+11. **`evidence_is_attested()` and `attested_properties()` are deleted from
+    `gap_kernel.world_model.store`.** Both read an unsigned claim off the entity,
+    which is the defect in functional form: a pure function over agent-supplied
+    data can only ever return what the agent sent. Verification now lives on
+    `EvidenceVerifier`, which the kernel constructs from issuer keys it resolved
+    itself.
+    *What to do:* build an `EvidenceVerifier(issuer_registry)` and call
+    `.attests(entity, key)`. The kernel does this internally; callers rarely need
+    to.
+
+12. **`WorldModelStore.upsert_entity()` no longer discards a caller-supplied
+    attestation — it carries it.** The old behaviour existed only while the stamp
+    itself was the trust decision. In production the blob is minted outside the
+    process by the source of record and the store has no issuer registry to check
+    it with, so it is shape-checked and carried verbatim. Carrying it is safe
+    because verification is entirely kernel-side.
+    *What to do:* nothing, unless you asserted on the discard. The store's own
+    `_evidence_provenance` breadcrumb survives as an audit record with no bearing
+    on any verdict, and its `attested` boolean is gone.
+
+13. **`EntityProperties` no longer edits the provenance stamp on a direct write.**
+    Value binding subsumes it: a write that CHANGES a governance value already
+    fails the verifier's value check, and a write setting the SAME value is a
+    no-op that should not revoke anything. The warning log and the store's
+    mutation audit trail are unchanged. (On the RPC path this code never fired
+    anyway — `EntityState._guard_properties` rebuilds properties via a plain
+    dict initialization that bypasses `__setitem__`.)
+
+14. **Runtime dependencies pruned and the REST surface moved to an extra.**
     `langgraph`, `langchain-core`, `langchain-anthropic` and `langchain-openai`
     are removed. `fastapi` and `uvicorn` are no longer installed by
     `pip install gap-kernel`.

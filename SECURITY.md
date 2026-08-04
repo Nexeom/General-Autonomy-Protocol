@@ -109,8 +109,9 @@ A working demonstration of any of the following, against the governed postures:
   trust root does not name, or to accept a tampered profile.
 - Causing a HARD constraint or a Tier-1 regulatory-floor constraint to evaluate
   as satisfied when it is not, using only data an integrator or a caller can
-  supply — an unattested world-model value treated as evidence, a constraint
-  silently dropped, a threshold lost in transit.
+  supply — a forged or replayed evidence attestation, an unsigned world-model
+  value treated as evidence, a constraint silently dropped, a threshold lost in
+  transit.
 - Registering or altering an action type at runtime against a governed kernel,
   or reaching the Action Type Registry through the RPC or HTTP surface.
 - Input across the subprocess RPC boundary that crashes or hangs the kernel,

@@ -155,10 +155,15 @@ process:
    real damage surface, since the executors are what actually touch the world.
 4. **Undo a halt.** `kill_switch.disengage()` takes a free-text `disengaged_by`
    and authenticates nothing. Or set `fabric._kill_switch = None`.
-5. **Rewrite the evidence.** Write `entity.properties["gdpr_consent"]` and the
-   reserved `_evidence_provenance` stamp directly. The store is the sole
-   provenance writer *for writes that go through the store*; the stamp is a plain
-   dict field. `world_model/store.py` states this in its own module docstring.
+5. **Rewrite the evidence.** Write `entity.properties["gdpr_consent"]` directly.
+   Signed Evidence Attestation means the changed value no longer *counts* — the
+   signature binds the value it was issued over — but adversary B does not need
+   to make it count. If the issuer private key is reachable from this process
+   (an `InProcessEvidenceSigner`, or a key file readable by this OS user), B
+   mints a fresh attestation over whatever it likes. **If the agent process can
+   sign, the mechanism is theatre.** What SEA moves is the requirement: from
+   "write a dict" to "hold an issuer key", which is a real escalation only if the
+   deployment actually keeps that key out of reach.
 6. **Rewrite history.** `LineageStore._signing_key_hex` is in the same process,
    so a record can be altered, re-signed, and the chain anchor recomputed — and
    `verify_chain_integrity()` will pass.
@@ -240,7 +245,7 @@ See §7.
 | Approve above an approver's authority | Per-approver ceiling; an approver absent from the map cannot authorize at all | `execution/fabric.py:_verify_oob_authority` | Enforced when `approver_max_levels` is configured |
 | Register a permissive action type at runtime | Governed kernel refuses; registry rides in the signed profile; no RPC method, no HTTP route | `governance/kernel.py:register_action_type` | Enforced |
 | Choose the evaluation clock | Governed kernel ignores caller time; no clock crosses the RPC | `governance/kernel.py:_resolve_time` | Enforced |
-| Flip consent or geography to change a verdict | Governance-relevant properties carry store-stamped provenance; unattested values are unevaluable, which is a violation; stamping is downgrade-only | `world_model/store.py` | ❌ **Not enforced. The stamp is an unsigned dict and is forgeable.** In the isolated posture the agent authors the `world_state` field of the `evaluate` request, so a hand-written `{"attested": true, ...}` reads as attested to the kernel. Reproduced: the same proposal is `rejected ['gdpr_consent_required']` unattested and `approved []` with a forged stamp. This needs **no code execution** — it is reachable through the published RPC interface by any party that supplies data, which is a different and larger exposure than the in-process caveat elsewhere in this document. |
+| Flip consent or geography to change a verdict | Governance-relevant properties require a **Signed Evidence Attestation** — an Ed25519 signature by a registered issuer over the entity id, the exact values, the window and the issuer key id — verified by the kernel against issuers resolved from the trust root; values compare as canonical JSON, so a signature over `1` does not certify `True`; an unverifiable value is unevaluable, which is a violation | `world_model/attestation.py`, `governance/kernel.py` | 🔧 **Enforced against a party that supplies data; the guarantee is a property of where the ISSUER PRIVATE KEY lives.** The previously reproduced bypass — a hand-written `{"attested": true, "governance_properties": [...]}` turning `rejected ['gdpr_consent_required']` into `approved []` through the published RPC interface, with no code execution — is closed. What is *not* closed: an issuer key on the agent's host under the agent's OS user is readable by the agent, which then mints anything; a signature proves an issuer asserted a fact, never that the fact is true; there is no revocation, so a captured attestation replays until the kernel's max-age ceiling passes; and this covers the 2 world-model-backed evaluators, not the 7 that read agent-authored action parameters. |
 | Negotiate around a hard constraint via CGA | Replan within bounds or escalate; never bypass | `strategy/cga_loop.py` | Enforced, adversarially tested |
 | Route around a halt by retargeting | Kill switch checked first, per-entity scope; the loop refuses to plan and does not retarget | `execution/fabric.py:execute`, `strategy/cga_loop.py` | Enforced |
 | Amplify authority through delegation | Rank-bounded sub-agent ceiling, constraints accumulate downward, halt propagates to the subtree | `governance/multi_agent.py`, `execution/sub_agent_executor.py` | Enforced for sub-agents routed through `SubAgentExecutor` |
@@ -265,7 +270,7 @@ address, each with the control that does.
 | Unauthenticated mutation over HTTP | `create_app` carries no authentication and deliberately never will — an identity framework grown inside a governance kernel becomes the thing deployments trust for authorization while being nobody's product | **An authenticated reverse proxy in front of the app.** Keep `enable_mutating_routes=False` unless that proxy exists and identifies callers; the split between the read/evaluate surface and the mutating surface *is* the security contract. |
 | Anyone in the process can engage or disengage the kill switch | `engaged_by` / `disengaged_by` are free-text; the audit log is in-memory | **Operator identity at the control plane** — expose engage/disengage only through an authenticated operator channel that binds a real identity, and persist the switch's audit log append-only outside the process. |
 | Ledger and database files tampered with or deleted | They are SQLite files on the agent host | **Store the ledgers where the agent user cannot write them**, and back them up; a deleted `ExecutionLedger` restores replayability for every unexpired decision. |
-| A dishonest Strategy Layer populating regulatory metadata | The Category evaluators verify that the required structural element is *present and declared* — that a fairness evaluation ran, that AML screening happened — not that the underlying result was truthful | **Source regulatory evidence from attested channels** and validate it independently of the layer that proposes the action. Treat the Strategy Layer as untrusted input. |
+| A dishonest Strategy Layer populating regulatory metadata | The Category evaluators verify that the required structural element is *present and declared* — that a fairness evaluation ran, that AML screening happened — not that the underlying result was truthful. Signed Evidence Attestation does **not** reach this: it covers the 2 evaluators that read the world model, and these 7 read `action.parameters` or `proposal.estimated_cost`, 5 of them behind a flag the agent chooses to set (omit `safety_critical` and the physical-safety check never runs); the other 2 fail closed on omission but still rule on agent-authored numbers. See [KNOWN_GAPS F8](KNOWN_GAPS.md) | **Source regulatory evidence from attested channels** and validate it independently of the layer that proposes the action. Treat the Strategy Layer as untrusted input. |
 | Compromise of a human approver | GAP verifies a signature; it cannot verify a person | **Hardware-backed approver keys**, per-approver ceilings (`approver_max_levels`), and an out-of-band approval channel the agent has no route to. |
 | Denial of service | The kernel refuses oversized requests and times out a hung child, but nothing rate-limits an integrator | **Rate limiting and quotas at the proxy**, plus process supervision that restarts a killed kernel channel. |
 
@@ -331,13 +336,14 @@ pytest tests/ -q --cov=gap_kernel --cov-fail-under=90
 ruff check gap_kernel/ tests/
 ```
 
-The suite is 550 tests; CI runs it on Python 3.11–3.13 on Linux and 3.13 on
+The suite is 639 tests; CI runs it on Python 3.11–3.13 on Linux and 3.13 on
 Windows, and enforces the 90% coverage floor.
 
 The adversarial suites are where the claims in §6 are tested:
 `tests/test_adversarial.py`, `tests/test_decision_integrity.py`,
 `tests/test_replay_protection.py`, `tests/test_boundary_hardening.py`,
 `tests/test_registry_integrity.py`, `tests/test_world_model_trust.py`,
+`tests/test_evidence_attestation.py`,
 `tests/test_fail_closed.py`, `tests/test_corrigibility.py`,
 `tests/test_kernel_service.py` (a real subprocess boundary),
 `tests/test_deployment_defaults.py`, `tests/test_reconciler_resilience.py`,
