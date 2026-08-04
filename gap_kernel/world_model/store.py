@@ -10,14 +10,24 @@ local hour, so whatever can write those facts decides the verdict. Those keys
 are declared here and only count as evidence when they arrive through a channel
 the deployment has declared attested; the store is their sole provenance writer.
 
-Scope of that guarantee: the provenance record is a plain field, not a signature.
-It stops every writer that goes through this store — an anonymous HTTP ingest, an
-executor's write-back, a merge carrying a forged stamp — and it is downgrade-only,
-so an untrusted write can turn an approval into a rejection but never the reverse.
-It does NOT stop code running inside the process that assembles the world model,
-which can mutate an entity's property dict directly; the same-process caveat that
-applies to ``InProcessGovernanceClient`` applies here. Closing that would require
-the evidence to be signed by a key the agent side does not hold.
+Scope of that guarantee, stated bluntly: **the provenance record is a plain
+field, not a signature, so it is forgeable and this store is not where the
+guarantee lives.** It stops every writer that goes through the store — an
+anonymous HTTP ingest, an executor's write-back, a merge carrying a supplied
+stamp — and it is downgrade-only, so such a write can turn an approval into a
+rejection but never the reverse.
+
+It does NOT stop a caller that assembles the ``WorldModel`` itself. That is not
+an exotic case: in the isolated posture the agent legitimately authors the whole
+``world_state`` field of an ``evaluate`` request, and ``model_validate``
+reconstructs the stamp from that JSON without it ever passing through this
+store. A hand-written ``{"attested": True, "governance_properties": [...]}``
+therefore reads as attested to the kernel. This needs no code execution — it is
+reachable through the boundary's own published interface by any party that can
+supply data.
+
+Closing it requires the evidence to be signed by a key the agent side does not
+hold, and verified by the kernel rather than read off the entity.
 """
 
 import logging

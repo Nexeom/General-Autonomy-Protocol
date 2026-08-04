@@ -12,7 +12,29 @@ For the full earned/not-earned matrix see [CONFORMANCE.md](CONFORMANCE.md).
 
 ## Critical
 
-*None currently open.*
+**C1. The evidence attestation stamp is unsigned and therefore forgeable.**
+Governance-relevant world-model properties carry a provenance stamp under
+`_evidence_provenance`, and a governed kernel treats an unattested value as
+unevaluable — a violation. But the stamp is a plain dict. A caller that
+assembles the `WorldModel` itself never passes through `WorldModelStore`, and in
+the isolated posture the agent legitimately authors the entire `world_state`
+field of the `evaluate` request. A hand-written
+`{"attested": true, "governance_properties": ["gdpr_consent", "geo"]}` therefore
+reads as attested to the kernel.
+
+Reproduced against a governed kernel: the same proposal is
+`rejected ['gdpr_consent_required']` with an unattested world model and
+`approved []` with the forged stamp. **This requires no code execution** — it is
+reachable through the published RPC interface by any party that supplies data,
+which puts it in a different and larger exposure class than A1 below.
+
+This was previously recorded as closed on the strength of an HTTP reproduction.
+That verification exercised the ingest path, which the store does guard, and not
+the RPC path, which it does not. The fix is an Ed25519 attestation binding
+entity, property values, expiry and issuer, verified kernel-side against an
+issuer registry resolved from the trust root — the only control in GAP whose
+anchor can live off the agent host entirely. In progress on
+`claude/execution-boundary`.
 
 The five criticals found in the last review — unauthenticated action-type
 registration, unauthenticated world-model writes flipping a hard constraint,
