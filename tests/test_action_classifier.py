@@ -1,7 +1,7 @@
 """Tests for the operational -> governance ActionTypeClassifier."""
 
-from datetime import datetime
 
+from gap_kernel._time import utcnow
 from gap_kernel.governance.action_classifier import ActionTypeClassifier
 from gap_kernel.models.strategy import PlannedAction, StrategyProposal
 
@@ -13,7 +13,7 @@ def _proposal(action_types):
             PlannedAction(action_type=at, target="t", parameters={}, risk_score=1)
             for at in action_types
         ],
-        estimated_cost=0.01, rationale="r", generated_at=datetime.utcnow(),
+        estimated_cost=0.01, rationale="r", generated_at=utcnow(),
     )
 
 

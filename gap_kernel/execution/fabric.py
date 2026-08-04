@@ -11,11 +11,12 @@ Behavioral Contract:
 - Handles execution-level retries (e.g., API timeout), not strategy-level retries
 """
 
+import hashlib
 import json
 import time
-from datetime import datetime
 from typing import Callable, Dict, Optional
 
+from gap_kernel._time import ensure_utc, utcnow
 from gap_kernel.crypto.signing import PublicKeyRegistry, verify as verify_signature
 from gap_kernel.governance.corrigibility import KillSwitch
 from gap_kernel.models.execution import ExecutionResult
@@ -31,6 +32,11 @@ from gap_kernel.models.strategy import (
     compute_proposal_digest,
 )
 from gap_kernel.models.world import WorldModel
+from gap_kernel.verification.execution_ledger import (
+    ExecutionLedger,
+    ExecutionReplayError,
+    ExecutionRow,
+)
 from gap_kernel.verification.oob_ledger import OOBLedger, ReplayError
 
 # Authorization levels that require OOB verification
@@ -69,6 +75,30 @@ class KillSwitchEngaged(ExecutionError):
     pass
 
 
+class ReplayExecutionError(ExecutionError):
+    """Raised when a decision that has already been executed is presented again.
+
+    A decision is a single-use authorization. Every other guard in the fabric is
+    stateless and passes identically on each replay, so this is the only one that
+    can tell a first execution from a fourth."""
+    pass
+
+
+# Sentinel completion key recording that this nonce's L2+ human approval has been
+# reserved. Kept in the same per-nonce table as the action keys so the reservation
+# settles atomically with the execution it belongs to; it can never collide with a
+# real action key, which is always "<index>:<sha256>".
+_OOB_RESERVATION_KEY = "__oob_reservation__"
+
+
+def _action_idempotency_key(index: int, action: PlannedAction) -> str:
+    """Stable per-action key for resume. Binds the action's position in the plan
+    AND its content, so a resumed execution can only skip the exact action that
+    already succeeded — never a different one that happens to share a slot."""
+    payload = json.dumps(action.model_dump(mode="json"), sort_keys=True, default=str)
+    return f"{index}:{hashlib.sha256(payload.encode()).hexdigest()}"
+
+
 class ExecutionFabric:
     """
     Dispatches approved strategies. For the kernel prototype,
@@ -101,6 +131,8 @@ class ExecutionFabric:
         allow_unsigned_decisions: bool = False,
         approver_max_levels: Optional[Dict[str, AuthorizationLevel]] = None,
         kill_switch: Optional[KillSwitch] = None,
+        execution_ledger: Optional[ExecutionLedger] = None,
+        kernel_key_registry: Optional[PublicKeyRegistry] = None,
     ):
         self.world_model = world_model
         self._executors: Dict[str, Callable] = {}
@@ -110,9 +142,21 @@ class ExecutionFabric:
         # Persistent replay protection + approver-key trust boundary for OOB.
         # Defaults are process-local; production injects shared, durable stores.
         self._oob_ledger = oob_ledger if oob_ledger is not None else OOBLedger()
+        # Replay authority for the decision itself, at EVERY authorization level.
+        # The OOB ledger only covers the L2+ human-approval gates, which leaves
+        # L0/L1 — the routine autonomous path — with no record of what has already
+        # been executed at all.
+        self._execution_ledger = (
+            execution_ledger if execution_ledger is not None else ExecutionLedger()
+        )
         self._public_key_registry = (
             public_key_registry if public_key_registry is not None else PublicKeyRegistry()
         )
+        # Optional trust store of Governance Kernel public keys, resolved by the
+        # decision's `kernel_public_key_id` — which is inside the signed payload,
+        # so which key signed is authenticated rather than rewritable metadata.
+        # An unknown key id fails closed.
+        self._kernel_key_registry = kernel_key_registry
         # Kernel public key (Fix 2) — the fabric verifies that every decision was
         # signed by the trusted Governance Kernel before executing. Fail closed
         # by default: if no key is configured the fabric REFUSES to execute,
@@ -139,7 +183,14 @@ class ExecutionFabric:
         GUARD: The decision must authorize THIS proposal.
         GUARD: The decision must be signed by the trusted Governance Kernel.
         GUARD: Never execute without governance approval.
-        GUARD: L2+ requires Out-of-Band Authority Verification.
+        GUARD: The decision must be unexpired and not already executed (its
+               signed nonce is claimed in the ExecutionLedger before dispatch).
+        GUARD: L2+ requires Out-of-Band Authority Verification, reserved BEFORE
+               dispatch so the same human approval cannot be spent twice.
+
+        A dispatch failure leaves the execution resumable: re-presenting the same
+        decision resumes it and skips the actions that already succeeded, so a
+        retry never repeats a side effect under one authorization.
         """
         # Corrigibility halt (checked first): a halt overrides everything.
         if self._kill_switch is not None:
@@ -178,34 +229,78 @@ class ExecutionFabric:
                 f"not approved."
             )
 
-        # OOB Authority Verification for L2+ authorization gates (verify only —
-        # the approval is consumed after a successful dispatch, below, so a
-        # transient execution failure does not burn a valid human approval).
+        # Freshness + single-use fields. Checked before anything is claimed or
+        # reserved so a stale or unbound decision never reaches the ledgers.
+        self._verify_single_use_fields(governance_decision)
+
+        # OOB Authority Verification for L2+ authorization gates (cryptographic
+        # checks only — the approval is *reserved* below, before dispatch).
         self._verify_oob_authority(governance_decision)
+
+        # Claim the decision's nonce. This is the replay authority: a nonce that
+        # already ran to completion is refused here, at every authorization
+        # level. A nonce whose previous attempt failed is RESUMED instead, and
+        # carries forward which of its actions already succeeded.
+        row = self._begin_execution(proposal, governance_decision)
+
+        # Reserve the human approval BEFORE dispatch (TOCTOU): checking it, then
+        # dispatching, then consuming leaves a window in which a second execution
+        # spends the same approval. The reservation is recorded against the nonce
+        # only once it has actually succeeded, so a resumed execution re-spends
+        # nothing — and an attempt whose reservation FAILED is not waved through
+        # on its next try.
+        # A claim held by this call must be settled even if the attempt aborts by
+        # raising: an unsettled row keeps its in-flight lease, which would lock a
+        # still-valid authorization until the lease expired instead of leaving it
+        # immediately retryable.
+        try:
+            if row is None:
+                self._reserve_oob_authority(governance_decision)
+            elif _OOB_RESERVATION_KEY not in row.completed_actions:
+                self._reserve_oob_authority(governance_decision)
+                self._execution_ledger.record_action(row.nonce, _OOB_RESERVATION_KEY)
+        except BaseException:
+            if row is not None:
+                self._execution_ledger.finish(row.nonce, success=False)
+            raise
 
         start_time = time.monotonic()
         completed = []
         failed = []
         state_changes = []
+        already_done = row.completed_actions if row is not None else frozenset()
 
-        for action in proposal.actions:
-            result = self._dispatch_action(action)
-            if result["success"]:
-                completed.append(result)
-                # Update world model with outcome
-                changes = self._apply_state_changes(action, result)
-                state_changes.extend(changes)
-            else:
-                failed.append(result)
+        try:
+            for index, action in enumerate(proposal.actions):
+                key = _action_idempotency_key(index, action)
+                if key in already_done:
+                    # The side effect happened under this same authorization on an
+                    # earlier attempt. Report it as completed, but do NOT re-dispatch
+                    # it and do NOT re-apply its world-state change.
+                    completed.append(self._already_completed(action))
+                    continue
+                result = self._dispatch_action(action)
+                if result["success"]:
+                    if row is not None:
+                        self._execution_ledger.record_action(row.nonce, key)
+                    completed.append(result)
+                    # Update world model with outcome
+                    changes = self._apply_state_changes(action, result)
+                    state_changes.extend(changes)
+                else:
+                    failed.append(result)
+        except BaseException:
+            if row is not None:
+                self._execution_ledger.finish(row.nonce, success=False)
+            raise
 
         elapsed = time.monotonic() - start_time
         success = len(failed) == 0
 
-        # Consume the OOB authorization only after a successful dispatch, so a
-        # transient execution failure leaves a valid human approval usable for a
-        # legitimate retry rather than permanently burning it.
-        if success:
-            self._consume_oob_authority(governance_decision)
+        # Settle. On success the nonce is spent for good; on failure the row stays
+        # resumable, so a transient failure does not destroy a valid authorization.
+        if row is not None:
+            self._execution_ledger.finish(row.nonce, success=success)
 
         return ExecutionResult(
             proposal_id=proposal.id,
@@ -213,12 +308,78 @@ class ExecutionFabric:
             actions_failed=failed,
             success=success,
             world_state_changes=state_changes,
-            executed_at=datetime.utcnow(),
+            executed_at=utcnow(),
             execution_duration_seconds=round(elapsed, 3),
         )
 
-    def _consume_oob_authority(self, decision: GovernanceDecision) -> None:
-        """Record-use an L2+ OOB authorization in the persistent replay ledger."""
+    @staticmethod
+    def _already_completed(action: PlannedAction) -> dict:
+        """The result entry for an action a previous attempt already completed."""
+        return {
+            "action_type": action.action_type,
+            "target": action.target,
+            "success": True,
+            "data": {"status": "already_completed"},
+            "duration": 0.0,
+            "skipped": True,
+        }
+
+    def _begin_execution(
+        self, proposal: StrategyProposal, decision: GovernanceDecision
+    ) -> Optional[ExecutionRow]:
+        """Claim (or resume) this decision's nonce in the ExecutionLedger.
+
+        Returns ``None`` only in the unsigned-decision escape hatch, where the
+        decision carries no authenticated identity to key replay on (see
+        ``_verify_single_use_fields``).
+        """
+        if decision.nonce is None:
+            return None
+        try:
+            return self._execution_ledger.begin(
+                decision.nonce,
+                decision_id=decision.id,
+                proposal_id=proposal.id,
+            )
+        except ExecutionReplayError as exc:
+            raise ReplayExecutionError(str(exc)) from exc
+
+    def _verify_single_use_fields(self, decision: GovernanceDecision) -> None:
+        """A decision authorizes ONE execution, for a bounded time.
+
+        Fail closed: a decision the fabric authenticates must carry the nonce and
+        expiry the kernel signs into it. Without them replay protection is
+        unevaluable, which is a violation, not a pass. The sole exception is the
+        `allow_unsigned_decisions` prototype escape hatch, where no field of the
+        decision is authenticated in the first place and the fabric has already
+        been told so explicitly.
+        """
+        if decision.nonce is None or decision.expires_at is None:
+            if (
+                self._kernel_public_key_hex is None
+                and self._kernel_key_registry is None
+                and self._allow_unsigned_decisions
+            ):
+                return
+            raise ExecutionError(
+                f"Decision {decision.id} carries no single-use binding (nonce and "
+                f"expires_at); replay protection cannot be evaluated, so it is "
+                f"refused."
+            )
+        if utcnow() > ensure_utc(decision.expires_at):
+            raise ExecutionError(
+                f"Decision {decision.id} expired at "
+                f"{ensure_utc(decision.expires_at).isoformat()}; refusing to execute "
+                f"a stale authorization."
+            )
+
+    def _reserve_oob_authority(self, decision: GovernanceDecision) -> None:
+        """Spend an L2+ OOB authorization in the persistent replay ledger.
+
+        Called BEFORE dispatch. The ledger's PRIMARY KEY makes the claim atomic,
+        so this is both the "has it been used" test and the consumption — there
+        is no window between the two for a second execution to slip through.
+        """
         if decision.authorization_level not in _OOB_REQUIRED_LEVELS:
             return
         if not decision.human_approval_signature:
@@ -235,15 +396,44 @@ class ExecutionFabric:
                 f"(non-replayable)."
             ) from exc
 
+    def _resolve_kernel_public_key(self, decision: GovernanceDecision) -> Optional[str]:
+        """The public key this decision must verify against.
+
+        An explicitly configured key wins. Otherwise, when a kernel key registry
+        is supplied, the key is resolved from the decision's
+        ``kernel_public_key_id`` — a field inside the signed payload, so which
+        kernel signed is authenticated rather than rewritable metadata. Naming a
+        different registered kernel gains an attacker nothing: they still cannot
+        produce a signature for a key they do not hold. An absent or unregistered
+        key id fails closed.
+        """
+        if self._kernel_public_key_hex is not None:
+            return self._kernel_public_key_hex
+        if self._kernel_key_registry is None:
+            return None
+        if not decision.kernel_public_key_id:
+            raise ExecutionError(
+                f"Decision {decision.id} names no signing kernel "
+                f"(kernel_public_key_id); the verifying key cannot be resolved."
+            )
+        public_key_hex = self._kernel_key_registry.get(decision.kernel_public_key_id)
+        if not public_key_hex:
+            raise ExecutionError(
+                f"Decision {decision.id} signing kernel "
+                f"'{decision.kernel_public_key_id}' is not registered."
+            )
+        return public_key_hex
+
     def _verify_decision_signature(self, decision: GovernanceDecision) -> None:
         """Verify the decision was signed by the trusted Governance Kernel (Fix 2).
 
-        Fail closed: with no kernel public key configured, execution is refused
-        unless the fabric was constructed with `allow_unsigned_decisions=True`
-        (an explicit prototype escape hatch). An unverifiable decision is never
-        trusted by omission.
+        Fail closed: with no kernel public key configured or resolvable, execution
+        is refused unless the fabric was constructed with
+        `allow_unsigned_decisions=True` (an explicit prototype escape hatch). An
+        unverifiable decision is never trusted by omission.
         """
-        if self._kernel_public_key_hex is None:
+        kernel_public_key_hex = self._resolve_kernel_public_key(decision)
+        if kernel_public_key_hex is None:
             if self._allow_unsigned_decisions:
                 return
             raise ExecutionError(
@@ -257,7 +447,7 @@ class ExecutionFabric:
                 f"(a valid Governance Kernel signature is required)."
             )
         if not verify_signature(
-            self._kernel_public_key_hex,
+            kernel_public_key_hex,
             canonical_decision_payload(decision),
             decision.decision_signature,
         ):
@@ -307,10 +497,12 @@ class ExecutionFabric:
         3. the approver's public key is registered (known authority), and the
            approver is permitted to authorize at this level (per-key ceiling);
         4. the signature cryptographically verifies over the canonical message
-           (decision id, proposal, level, approver, expiry);
-        5. the authorization has not already been consumed (persistent replay
-           protection). The approval is *consumed* only after a successful
-           dispatch (see _consume_oob_authority).
+           (decision id, proposal, level, approver, expiry).
+
+        Non-replayability is NOT tested here: it is enforced by the atomic
+        reservation in :meth:`_reserve_oob_authority`, taken before dispatch. A
+        separate "has it been used?" read followed by a later consume is exactly
+        the check-then-act window that lets one approval be spent twice.
         """
         if decision.authorization_level not in _OOB_REQUIRED_LEVELS:
             return  # L0 and L1 do not require OOB verification
@@ -329,7 +521,7 @@ class ExecutionFabric:
             )
 
         # 2. Freshness — the approval must not be expired.
-        if datetime.utcnow() > decision.human_approval_valid_until:
+        if utcnow() > decision.human_approval_valid_until:
             raise OOBVerificationError(
                 f"Decision {decision.id} OOB approval expired at "
                 f"{decision.human_approval_valid_until.isoformat()}."
@@ -372,16 +564,6 @@ class ExecutionFabric:
         ):
             raise OOBVerificationError(
                 f"Decision {decision.id} OOB approval signature is invalid."
-            )
-
-        # 5. Non-replayability — reject an already-consumed approval. Actual
-        #    consumption happens after a successful dispatch (consume-on-success).
-        if self._oob_ledger.has_been_used(
-            decision.id, decision.human_approval_signature
-        ):
-            raise OOBVerificationError(
-                f"Decision {decision.id} OOB authorization has already been used "
-                f"(non-replayable)."
             )
 
     def _dispatch_action(self, action: PlannedAction) -> dict:
@@ -428,9 +610,9 @@ class ExecutionFabric:
         if entity:
             # Mark entity as contacted / updated
             if action.action_type in ("send_email", "route_to_human", "automated_outreach"):
-                entity.properties["last_contacted"] = datetime.utcnow().isoformat()
+                entity.properties["last_contacted"] = utcnow().isoformat()
                 entity.properties["contact_method"] = action.action_type
-                entity.last_updated = datetime.utcnow()
+                entity.last_updated = utcnow()
                 changes.append({
                     "entity_id": target_id,
                     "field": "last_contacted",
@@ -474,6 +656,6 @@ class ExecutionFabric:
         if entity:
             updates = action.parameters.get("updates", {})
             entity.properties.update(updates)
-            entity.last_updated = datetime.utcnow()
+            entity.last_updated = utcnow()
             return {"status": "updated", "fields": list(updates.keys())}
         return {"status": "not_found"}

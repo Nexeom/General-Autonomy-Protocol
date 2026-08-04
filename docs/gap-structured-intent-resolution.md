@@ -168,3 +168,27 @@ actionable. This is not a chat window. It is a governance control surface.
 This specification does not define implementation details. It defines what any
 GAP-compliant implementation MUST capture, confirm, and audit at the intent
 transfer boundary.
+
+---
+
+## IMPLEMENTATION STATUS
+
+What the GAP reference implementation runs, per requirement
+(`gap_kernel/governance/sir.py`, `gap_kernel/models/sir.py`).
+
+**The headline caveat first:** the SIR readiness gate is **opt-in, and it is not
+on the shipped autonomous path.** `ReconcilerLoop` constructs its `CGALoop`
+without an intent resolver, and the gate only engages when a caller passes an
+`intent_declaration` into `CGALoop.run()` — which the reconciler does not do. A
+governed deployment assembled via `build_governed_deployment()` *does* get a
+resolver. So GAP's autonomous heartbeat, the thing that actually runs unattended,
+begins where this document says governance must not begin: after intent transfer.
+
+| Req | Status | Detail |
+|---|---|---|
+| **SIR-1** Intent Declaration | Implemented, with one dead field | All five components exist on `IntentDeclaration`. **`declared_boundaries` is captured and never read** — nothing in the kernel, loop, or fabric evaluates a proposed action against the boundaries the human declared. The negative space of the action plan is recorded for the audit trail and enforces nothing |
+| **SIR-2** Meta-Intent Inference | Partial | `infer_meta_intent(stated_intent)` derives risk tolerance, value hierarchy and stakeholders by deterministic keyword matching over the stated intent. It is **advisory** — surfaced for the human to confirm or correct, never a gate. It does not use operational context or historical pattern as this document requires. A model-based inferencer is a pluggable interface and is unimplemented |
+| **SIR-3** Proportional Resolution | Implemented | `resolution_mode` / `requires_confirmation` / `is_ready_for_cga` implement the L0–L4 ladder: L0 requires a valid standing declaration, L1+ requires confirmed-or-corrected state. Subject to the opt-in caveat above |
+| **SIR-4** Intent Lineage | Partial | The declaration is Ed25519-sealed and linked to the resulting Decision Record. **`verify_seal` has no callers outside tests** — nothing on any execution path checks the seal before acting on a declaration, so the seal is currently evidence for an auditor rather than an enforced precondition. The *intent alignment gap* feedback loop (recording interpretation divergence revealed by outcome, and calibrating against it) is not implemented |
+| **SIR-5** Standing Intent Governance | Partial | `validate_standing` enforces all four structural rules: not authored by the system, not expired, L0-only, confirmed. The **alert condition is not implemented** — nothing compares L0 outcomes under a standing declaration against its meta-intent, so there is no automatic escalation to L1 on drift from standing intent |
+| **Governance Dashboard** | Not implemented | No human interface ships in this repository. The Intent Panel, Boundary Display, Authorization State, Hard Stop Controls and Intent Alignment Indicator are all unbuilt. A kill switch primitive exists (`governance/corrigibility.py`) and is wired through the fabric and reconciler, but it has no UI and its operator identity is an unauthenticated free-text label |

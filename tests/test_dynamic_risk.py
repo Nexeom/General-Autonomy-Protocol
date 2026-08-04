@@ -12,26 +12,17 @@ Test cases:
 8. External signal processing triggers appropriate escalation
 """
 
-from datetime import datetime, timedelta
 
-import pytest
 
+from gap_kernel._time import utcnow
 from gap_kernel.governance.dynamic_risk import (
     DynamicRiskEngine,
     EscalationConfig,
-    EscalationTrigger,
     EscalationTriggerType,
 )
 from gap_kernel.governance.kernel import GovernanceKernel
-from gap_kernel.models.governance import (
-    AuthorizationLevel,
-    GovernanceVerdict,
-)
 from gap_kernel.models.intent import (
-    Constraint,
-    ConstraintType,
     IntentVector,
-    PolicyActivation,
 )
 from gap_kernel.models.strategy import PlannedAction, StrategyProposal
 from gap_kernel.models.world import WorldModel
@@ -72,7 +63,7 @@ def _make_proposal(
         ],
         estimated_cost=0.10,
         rationale="Test rationale",
-        generated_at=datetime.utcnow(),
+        generated_at=utcnow(),
     )
 
 
@@ -84,14 +75,14 @@ def _make_intent() -> IntentVector:
         hard_constraints=[],
         soft_constraints=[],
         created_by="test",
-        created_at=datetime.utcnow(),
+        created_at=utcnow(),
     )
 
 
 def _make_world_state() -> WorldModel:
     return WorldModel(
         entities={},
-        last_reconciled=datetime.utcnow(),
+        last_reconciled=utcnow(),
     )
 
 

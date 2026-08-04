@@ -6,10 +6,11 @@ is unsigned, forged, or tampered — so an in-process agent cannot mint or alter
 an approval without the kernel's private key, which it does not hold.
 """
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 
+from gap_kernel._time import utcnow
 from gap_kernel.crypto.signing import PublicKeyRegistry, generate_keypair, sign, verify
 from gap_kernel.execution.fabric import ExecutionError, ExecutionFabric
 from gap_kernel.governance.kernel import GovernanceKernel
@@ -33,19 +34,19 @@ def _proposal(risk=1, pid="prop_e"):
         actions=[PlannedAction(action_type="query_crm", target="t1", parameters={}, risk_score=risk)],
         estimated_cost=0.01,
         rationale="r",
-        generated_at=datetime.utcnow(),
+        generated_at=utcnow(),
     )
 
 
 def _intent():
     return IntentVector(
         id="i1", objective="o", priority=50, hard_constraints=[], soft_constraints=[],
-        created_by="t", created_at=datetime.utcnow(),
+        created_by="t", created_at=utcnow(),
     )
 
 
 def _world():
-    return WorldModel(entities={}, last_reconciled=datetime.utcnow())
+    return WorldModel(entities={}, last_reconciled=utcnow())
 
 
 def test_kernel_signs_every_decision():
@@ -77,7 +78,7 @@ def test_fabric_rejects_unsigned_decision():
     forged = GovernanceDecision(
         id="gov_forge", proposal_id="prop_e", verdict=GovernanceVerdict.APPROVED,
         authorization_level=AuthorizationLevel.L0, temporal_context={},
-        policy_snapshot={}, evaluated_at=datetime.utcnow(),
+        policy_snapshot={}, evaluated_at=utcnow(),
     )
     with pytest.raises(ExecutionError, match="unsigned"):
         fabric.execute(_proposal(), forged)
@@ -89,7 +90,7 @@ def test_fabric_rejects_forged_signature():
     forged = GovernanceDecision(
         id="gov_forge", proposal_id="prop_e", verdict=GovernanceVerdict.APPROVED,
         authorization_level=AuthorizationLevel.L0, temporal_context={},
-        policy_snapshot={}, evaluated_at=datetime.utcnow(),
+        policy_snapshot={}, evaluated_at=utcnow(),
         decision_signature="00" * 64,
     )
     with pytest.raises(ExecutionError, match="invalid|forgery"):
@@ -154,10 +155,34 @@ def test_fabric_rejects_proposal_content_substitution():
     malicious = StrategyProposal(
         id="prop_e", intent_id="i1", attempt_number=1, plan_description="p",
         actions=[PlannedAction(action_type="send_email", target="t1", parameters={}, risk_score=10)],
-        estimated_cost=999.0, rationale="r", generated_at=datetime.utcnow(),
+        estimated_cost=999.0, rationale="r", generated_at=utcnow(),
     )
     with pytest.raises(ExecutionError, match="content digest mismatch"):
         fabric.execute(malicious, decision)
+
+
+def test_every_action_is_visible_to_dynamic_risk_escalation():
+    """Reporting only actions[0] to the risk engine leaves every later action's
+    target invisible — which is precisely where a decomposed plan hides its
+    out-of-baseline reach. All actions must be scored."""
+    kernel = GovernanceKernel()
+    kernel._dynamic_risk_engine.set_baseline("send_email", targets={"known_lead"})
+    proposal = StrategyProposal(
+        id="prop_multi", intent_id="i1", attempt_number=1, plan_description="p",
+        actions=[
+            PlannedAction(action_type="send_email", target="known_lead",
+                          parameters={}, risk_score=1),
+            PlannedAction(action_type="send_email", target="unknown_lead",
+                          parameters={}, risk_score=1),
+        ],
+        estimated_cost=0.02, rationale="r", generated_at=utcnow(),
+    )
+    decision = kernel.evaluate_proposal(
+        proposal=proposal, intents=[_intent()], world_state=_world()
+    )
+    assert decision.escalation_triggered is True
+    assert decision.escalation_evidence["target"] == "unknown_lead"
+    assert decision.authorization_level == AuthorizationLevel.L1
 
 
 def test_kernel_signature_survives_downstream_oob_approval():
@@ -167,15 +192,16 @@ def test_kernel_signature_survives_downstream_oob_approval():
     decision = GovernanceDecision(
         id="gov_l2e", proposal_id="prop_e", verdict=GovernanceVerdict.APPROVED,
         authorization_level=AuthorizationLevel.L2, temporal_context={},
-        policy_snapshot={}, evaluated_at=datetime.utcnow(),
+        policy_snapshot={}, evaluated_at=utcnow(),
+        nonce="nonce_l2e", expires_at=utcnow() + timedelta(minutes=5),
     )
     decision.decision_signature = sign(kernel_priv, canonical_decision_payload(decision))
 
     # Human OOB approval, added AFTER the kernel signed.
     approver_priv, approver_pub = generate_keypair()
-    valid_until = datetime.utcnow() + timedelta(minutes=5)
+    valid_until = utcnow() + timedelta(minutes=5)
     decision.human_approver_public_key_id = "alice"
-    decision.human_approval_timestamp = datetime.utcnow()
+    decision.human_approval_timestamp = utcnow()
     decision.human_approval_valid_until = valid_until
     decision.human_approval_signature = sign(
         approver_priv, ExecutionFabric._oob_signed_message(decision)

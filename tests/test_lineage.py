@@ -1,11 +1,9 @@
 """Tests for the Decision Lineage Store."""
 
 import hashlib
-import json
-from datetime import datetime
 
-import pytest
 
+from gap_kernel._time import utcnow
 from gap_kernel.crypto.signing import generate_keypair, sign, verify
 from gap_kernel.lineage.store import LineageStore
 from gap_kernel.models.governance import GovernanceDecision, GovernanceVerdict
@@ -20,7 +18,7 @@ def _make_lineage_record(
     intent_id: str = "intent_1",
     escalated: bool = False,
 ) -> LineageRecord:
-    now = datetime.utcnow()
+    now = utcnow()
     intent = IntentVector(
         id=intent_id,
         objective="Test objective",

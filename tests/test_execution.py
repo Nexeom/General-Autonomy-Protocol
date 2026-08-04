@@ -1,9 +1,9 @@
 """Tests for the Execution Fabric."""
 
-from datetime import datetime
 
 import pytest
 
+from gap_kernel._time import utcnow
 from gap_kernel.execution.fabric import ExecutionError, ExecutionFabric
 from gap_kernel.models.governance import GovernanceDecision, GovernanceVerdict
 from gap_kernel.models.strategy import PlannedAction, StrategyProposal
@@ -17,11 +17,11 @@ def _make_world() -> WorldModel:
                 entity_type="lead",
                 entity_id="lead_123",
                 properties={"name": "Test Lead"},
-                last_updated=datetime.utcnow(),
+                last_updated=utcnow(),
                 source="test",
             )
         },
-        last_reconciled=datetime.utcnow(),
+        last_reconciled=utcnow(),
     )
 
 
@@ -31,7 +31,7 @@ def _make_approved_decision(proposal_id: str) -> GovernanceDecision:
         proposal_id=proposal_id,
         verdict=GovernanceVerdict.APPROVED,
         authorization_tier="auto_execute",
-        evaluated_at=datetime.utcnow(),
+        evaluated_at=utcnow(),
     )
 
 
@@ -42,7 +42,7 @@ def _make_rejected_decision(proposal_id: str) -> GovernanceDecision:
         verdict=GovernanceVerdict.REJECTED,
         rejected_constraints=["test"],
         rejection_reason="test_violation",
-        evaluated_at=datetime.utcnow(),
+        evaluated_at=utcnow(),
     )
 
 
@@ -66,7 +66,7 @@ class TestExecutionFabric:
             ],
             estimated_cost=0.10,
             rationale="Direct approach",
-            generated_at=datetime.utcnow(),
+            generated_at=utcnow(),
         )
 
         decision = _make_approved_decision("prop_1")
@@ -97,7 +97,7 @@ class TestExecutionFabric:
             ],
             estimated_cost=0.10,
             rationale="Bypass attempt",
-            generated_at=datetime.utcnow(),
+            generated_at=utcnow(),
         )
 
         decision = _make_rejected_decision("prop_2")
@@ -130,7 +130,7 @@ class TestExecutionFabric:
             ],
             estimated_cost=5.05,
             rationale="Query then route",
-            generated_at=datetime.utcnow(),
+            generated_at=utcnow(),
         )
 
         decision = _make_approved_decision("prop_3")
@@ -158,7 +158,7 @@ class TestExecutionFabric:
             ],
             estimated_cost=0.0,
             rationale="Bad idea",
-            generated_at=datetime.utcnow(),
+            generated_at=utcnow(),
         )
 
         decision = _make_approved_decision("prop_4")
@@ -186,7 +186,7 @@ class TestExecutionFabric:
             ],
             estimated_cost=0.10,
             rationale="Direct contact",
-            generated_at=datetime.utcnow(),
+            generated_at=utcnow(),
         )
 
         decision = _make_approved_decision("prop_5")

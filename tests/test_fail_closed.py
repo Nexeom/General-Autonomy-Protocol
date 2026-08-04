@@ -10,6 +10,7 @@ These tests assert the kernel denies by default rather than silently passing:
 
 from datetime import datetime
 
+from gap_kernel._time import utcnow
 from gap_kernel.governance.kernel import GovernanceKernel, _is_constraint_active
 from gap_kernel.models.governance import GovernanceVerdict
 from gap_kernel.models.intent import (
@@ -38,7 +39,7 @@ def _low_risk_proposal(intent_id: str = "intent_1") -> StrategyProposal:
         ],
         estimated_cost=0.01,
         rationale="Routine",
-        generated_at=datetime.utcnow(),
+        generated_at=utcnow(),
     )
 
 
@@ -50,12 +51,12 @@ def _intent(hard=None, soft=None) -> IntentVector:
         hard_constraints=hard or [],
         soft_constraints=soft or [],
         created_by="test",
-        created_at=datetime.utcnow(),
+        created_at=utcnow(),
     )
 
 
 def _empty_world() -> WorldModel:
-    return WorldModel(entities={}, last_reconciled=datetime.utcnow())
+    return WorldModel(entities={}, last_reconciled=utcnow())
 
 
 # --- Constraint fail-closed ------------------------------------------------
@@ -130,7 +131,7 @@ def test_malformed_schedule_fails_closed_active():
         description="A time-scoped rule with a broken schedule",
         activation=PolicyActivation(always=False, schedule="not-a-valid-cron"),
     )
-    assert _is_constraint_active(constraint, datetime.utcnow()) is True
+    assert _is_constraint_active(constraint, utcnow()) is True
 
 
 def test_valid_schedule_outside_window_is_inactive():

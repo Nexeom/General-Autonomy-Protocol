@@ -6,10 +6,12 @@ SIR gate) are forced on. A governed deployment refuses to run without its floor
 or without a resolved intent.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 
+from gap_kernel._time import utcnow
 from gap_kernel.crypto.signing import PublicKeyRegistry, generate_keypair
 from gap_kernel.errors import GovernanceConfigError
 from gap_kernel.governance.deployment import build_governed_deployment
@@ -20,6 +22,7 @@ from gap_kernel.models.governance import AuthorizationLevel
 from gap_kernel.models.intent import Constraint, ConstraintType, IntentVector
 from gap_kernel.models.strategy import PlannedAction, StrategyProposal
 from gap_kernel.models.world import WorldModel
+from gap_kernel.service.kernel_server import TRUST_ROOT_ENV, provision_trust_root
 
 KID = "regulatory_authority"
 
@@ -34,17 +37,17 @@ class _Gen:
             id=f"prop_{attempt_number}", intent_id=intent.id, attempt_number=attempt_number,
             plan_description="op",
             actions=[PlannedAction(action_type="query_crm", target="t1", parameters={}, risk_score=self.risk)],
-            estimated_cost=0.01, rationale="r", generated_at=datetime.utcnow(),
+            estimated_cost=0.01, rationale="r", generated_at=utcnow(),
         )
 
 
 def _intent():
     return IntentVector(id="i1", objective="o", priority=50, hard_constraints=[],
-                        soft_constraints=[], created_by="t", created_at=datetime.utcnow())
+                        soft_constraints=[], created_by="t", created_at=utcnow())
 
 
 def _world():
-    return WorldModel(entities={}, last_reconciled=datetime.utcnow())
+    return WorldModel(entities={}, last_reconciled=utcnow())
 
 
 def _signed_profile():
@@ -58,6 +61,20 @@ def _signed_profile():
         issued_at=datetime(2026, 1, 1),
     )
     return sign_profile(profile, priv, KID), registry
+
+
+@pytest.fixture
+def deployed(tmp_path, monkeypatch):
+    """The out-of-band configuration a governed deployment requires: a trust root
+    on a path the deployer owns, and a directory for the durable ledgers. See
+    tests/test_deployment_defaults.py for what each of those defends."""
+    profile, registry = _signed_profile()
+    trust_root = provision_trust_root(str(tmp_path / "trust"), registry.as_dict())
+    monkeypatch.setenv(TRUST_ROOT_ENV, trust_root.path)
+    return SimpleNamespace(
+        profile=profile, registry=registry, trust_root=trust_root,
+        ledger_dir=str(tmp_path / "ledgers"),
+    )
 
 
 # --- the industry floor is required ----------------------------------------
@@ -80,10 +97,10 @@ def test_governed_kernel_requires_a_floor_and_forces_strict():
 
 # --- the SIR gate is mandatory in governed mode ----------------------------
 
-def test_governed_loop_requires_an_intent_declaration():
-    profile, registry = _signed_profile()
+def test_governed_loop_requires_an_intent_declaration(deployed):
     loop = build_governed_deployment(
-        applicability_profile=profile, profile_key_registry=registry, world_model=_world(),
+        applicability_profile=deployed.profile, world_model=_world(),
+        ledger_dir=deployed.ledger_dir,
         strategy_generator=_Gen(risk=1), isolated=False,
     )
     with pytest.raises(GovernanceConfigError, match="intent declaration"):
@@ -93,10 +110,10 @@ def test_governed_loop_requires_an_intent_declaration():
 
 # --- a fully-configured governed deployment runs end to end ----------------
 
-def test_governed_deployment_runs_end_to_end():
-    profile, registry = _signed_profile()
+def test_governed_deployment_runs_end_to_end(deployed):
     loop = build_governed_deployment(
-        applicability_profile=profile, profile_key_registry=registry, world_model=_world(),
+        applicability_profile=deployed.profile, world_model=_world(),
+        ledger_dir=deployed.ledger_dir,
         strategy_generator=_Gen(risk=1), isolated=False,
     )
     resolver: StructuredIntentResolver = loop.intent_resolver
@@ -144,15 +161,15 @@ def test_create_app_governed_wires_consequential_gim_onto_the_heartbeat():
     assert app.state.reconciler._block_on_integrity is True
 
 
-def test_isolated_governed_deployment_runs_out_of_process():
+def test_isolated_governed_deployment_runs_out_of_process(deployed):
     """By default the governed kernel runs in a separate OS process: the loop's
     governance handle is a SubprocessGovernanceClient holding no signing key, and
     the deployment still evaluates + executes end to end across the boundary."""
     from gap_kernel.client.governance_client import SubprocessGovernanceClient
 
-    profile, registry = _signed_profile()
     loop = build_governed_deployment(  # isolated defaults to True
-        applicability_profile=profile, profile_key_registry=registry, world_model=_world(),
+        applicability_profile=deployed.profile, world_model=_world(),
+        ledger_dir=deployed.ledger_dir,
         strategy_generator=_Gen(risk=1),
     )
     try:
@@ -168,12 +185,12 @@ def test_isolated_governed_deployment_runs_out_of_process():
         loop.governance.close()
 
 
-def test_governed_loop_context_manager_reaps_the_subprocess():
+def test_governed_loop_context_manager_reaps_the_subprocess(deployed):
     """The isolated loop is a context manager, so the kernel subprocess is reaped
     deterministically on exit (no orphan if the caller uses ``with``)."""
-    profile, registry = _signed_profile()
     with build_governed_deployment(
-        applicability_profile=profile, profile_key_registry=registry, world_model=_world(),
+        applicability_profile=deployed.profile, world_model=_world(),
+        ledger_dir=deployed.ledger_dir,
         strategy_generator=_Gen(risk=1),
     ) as loop:
         proc = loop.governance._proc
@@ -198,10 +215,10 @@ def test_create_app_governed_isolates_the_kernel_by_default():
         app.state.governance_client.close()
 
 
-def test_governed_deployment_blocks_unconfirmed_intent():
-    profile, registry = _signed_profile()
+def test_governed_deployment_blocks_unconfirmed_intent(deployed):
     loop = build_governed_deployment(
-        applicability_profile=profile, profile_key_registry=registry, world_model=_world(),
+        applicability_profile=deployed.profile, world_model=_world(),
+        ledger_dir=deployed.ledger_dir,
         strategy_generator=_Gen(risk=1), isolated=False,
     )
     resolver: StructuredIntentResolver = loop.intent_resolver

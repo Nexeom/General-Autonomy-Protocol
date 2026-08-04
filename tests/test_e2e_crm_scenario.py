@@ -16,10 +16,10 @@ described in the specification:
 This test exercises all validation criteria from Section 11.
 """
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
-import pytest
 
+from gap_kernel._time import utcnow
 from gap_kernel.execution.fabric import ExecutionFabric
 from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.learning.engine import LearningEngine
@@ -97,7 +97,7 @@ class TestCRMScenarioE2E:
                 ),
             ],
             created_by="jeremy",
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
         )
 
         # Intent 2: Cost Optimization
@@ -114,14 +114,14 @@ class TestCRMScenarioE2E:
                 ),
             ],
             created_by="jeremy",
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
         )
 
         self.reconciler.register_intent(sla_intent)
         self.reconciler.register_intent(cost_intent)
 
         # Entity: Lead #4821 — EU, high-value, no GDPR consent, waiting 8 minutes
-        created_at = datetime.utcnow() - timedelta(minutes=8)
+        created_at = utcnow() - timedelta(minutes=8)
         lead = EntityState(
             entity_type="lead",
             entity_id="lead_4821",
@@ -136,7 +136,7 @@ class TestCRMScenarioE2E:
                 "ingested_at": created_at.isoformat(),
                 "source_campaign": "enterprise_outbound",
             },
-            last_updated=datetime.utcnow(),
+            last_updated=utcnow(),
             source="crm_webhook",
             confidence=1.0,
             obligations=["lead_response_sla"],
@@ -263,9 +263,9 @@ class TestCRMScenarioE2E:
                     "geo": "US",
                     "gdpr_consent": True,
                     "local_hour": 10,
-                    "created_at": (datetime.utcnow() - timedelta(minutes=8)).isoformat(),
+                    "created_at": (utcnow() - timedelta(minutes=8)).isoformat(),
                 },
-                last_updated=datetime.utcnow(),
+                last_updated=utcnow(),
                 source="crm",
                 obligations=["lead_response_sla"],
             ),
@@ -277,9 +277,9 @@ class TestCRMScenarioE2E:
                     "geo": "EU",
                     "gdpr_consent": True,
                     "local_hour": 11,
-                    "created_at": (datetime.utcnow() - timedelta(minutes=9)).isoformat(),
+                    "created_at": (utcnow() - timedelta(minutes=9)).isoformat(),
                 },
-                last_updated=datetime.utcnow(),
+                last_updated=utcnow(),
                 source="crm",
                 obligations=["lead_response_sla"],
             ),
@@ -290,9 +290,9 @@ class TestCRMScenarioE2E:
                 properties={
                     "geo": "JP",
                     "local_hour": 15,
-                    "created_at": (datetime.utcnow() - timedelta(minutes=7)).isoformat(),
+                    "created_at": (utcnow() - timedelta(minutes=7)).isoformat(),
                 },
-                last_updated=datetime.utcnow(),
+                last_updated=utcnow(),
                 source="crm",
                 obligations=["lead_response_sla"],
             ),
@@ -355,7 +355,7 @@ class TestCRMScenarioE2E:
 
         # Add more entities with staggered creation times
         for i in range(5):
-            created_at = datetime.utcnow() - timedelta(minutes=7 + i * 0.5)
+            created_at = utcnow() - timedelta(minutes=7 + i * 0.5)
             entity = EntityState(
                 entity_type="lead",
                 entity_id=f"lead_batch_{i}",
@@ -365,7 +365,7 @@ class TestCRMScenarioE2E:
                     "local_hour": 14,
                     "created_at": created_at.isoformat(),
                 },
-                last_updated=datetime.utcnow(),
+                last_updated=utcnow(),
                 source="crm",
                 obligations=["lead_response_sla"],
             )

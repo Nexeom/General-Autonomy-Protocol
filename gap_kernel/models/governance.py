@@ -141,6 +141,16 @@ class GovernanceDecision(BaseModel):
     # under it. Set by the kernel, re-checked by the Execution Fabric.
     proposal_digest: Optional[str] = None
 
+    # Single-use binding. Every other guard in the Execution Fabric is stateless
+    # and so passes identically on every replay of the same decision; these two
+    # fields make an authorization spendable exactly once and only for a bounded
+    # window. The kernel stamps both when it signs, and both sit INSIDE the
+    # canonical payload — unsigned, they would be metadata an attacker rewrites.
+    # The fabric records the nonce in its ExecutionLedger (the replay authority
+    # at every authorization level) and refuses an expired decision.
+    nonce: Optional[str] = None
+    expires_at: Optional[datetime] = None
+
 
 def canonical_decision_payload(decision: "GovernanceDecision") -> str:
     """Deterministic serialization the kernel signs and the Execution Fabric verifies.
@@ -149,14 +159,17 @@ def canonical_decision_payload(decision: "GovernanceDecision") -> str:
     attestations (OOB fields), which are added *after* the kernel rules and are
     verified separately — so the kernel signature stays stable across the
     approval flow while still binding the verdict, authorization level, violated
-    constraints, uncertainty, and the proposal digest. Carries a domain tag so a
-    signature over this format cannot be confused with another signed payload.
+    constraints, uncertainty, the proposal digest, the single-use nonce and
+    expiry, and the id of the key that signed. Everything not in this exclusion
+    set is authenticated; anything in it is downstream attestation the fabric
+    verifies on its own terms. Carries a domain tag so a signature over this
+    format cannot be confused with another signed payload — bumped to v2 when
+    the nonce, the expiry, and ``kernel_public_key_id`` entered the payload.
     """
     data = decision.model_dump(
         mode="json",
         exclude={
             "decision_signature",
-            "kernel_public_key_id",
             "authority_verification_method",
             "authority_verification_channel",
             "authority_verified_at",
@@ -166,5 +179,5 @@ def canonical_decision_payload(decision: "GovernanceDecision") -> str:
             "human_approval_valid_until",
         },
     )
-    data["_domain"] = "gap.governance.decision.v1"
+    data["_domain"] = "gap.governance.decision.v2"
     return json.dumps(data, sort_keys=True, default=str)

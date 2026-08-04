@@ -7,10 +7,9 @@ the rest — transparency (Cat 3), anti-discrimination (Cat 4), financial AML
 violation case (the structural requirement absent) and a compliant case.
 """
 
-from datetime import datetime
 
-import pytest
 
+from gap_kernel._time import utcnow
 from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.models.governance import GovernanceVerdict
 from gap_kernel.models.intent import Constraint, ConstraintType, IntentVector
@@ -25,16 +24,16 @@ def _evaluate(constraint_name, *, action_type="query_crm", params=None, descript
         id="i1", objective="o", priority=50,
         hard_constraints=[Constraint(name=constraint_name, type=ConstraintType.HARD,
                                      description=description, threshold=threshold)],
-        soft_constraints=[], created_by="t", created_at=datetime.utcnow(),
+        soft_constraints=[], created_by="t", created_at=utcnow(),
     )
     proposal = StrategyProposal(
         id="p1", intent_id="i1", attempt_number=1, plan_description="x",
         actions=[PlannedAction(action_type=action_type, target="t1",
                                parameters=params or {}, risk_score=1)],
-        estimated_cost=0.01, rationale="r", generated_at=datetime.utcnow(),
+        estimated_cost=0.01, rationale="r", generated_at=utcnow(),
     )
     return kernel.evaluate_proposal(proposal=proposal, intents=[intent],
-                                    world_state=WorldModel(entities={}, last_reconciled=datetime.utcnow()))
+                                    world_state=WorldModel(entities={}, last_reconciled=utcnow()))
 
 
 def _rejected(decision, name):

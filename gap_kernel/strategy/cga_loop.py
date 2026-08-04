@@ -13,10 +13,12 @@ LLM-powered strategy generation.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Protocol
+from typing import Callable, List, Optional, Protocol
 from uuid import uuid4
 
+from gap_kernel._time import utcnow
 from gap_kernel.errors import GovernanceConfigError
 from gap_kernel.execution.fabric import _OOB_REQUIRED_LEVELS, ExecutionFabric
 from gap_kernel.governance.action_classifier import ActionTypeClassifier
@@ -28,7 +30,6 @@ from gap_kernel.governance.sir import StructuredIntentResolver
 from gap_kernel.models.execution import ExecutionResult
 from gap_kernel.models.sir import IntentDeclaration, StandingIntentDeclaration
 from gap_kernel.models.governance import (
-    AuthorizationLevel,
     GovernanceDecision,
     GovernanceVerdict,
 )
@@ -36,6 +37,26 @@ from gap_kernel.models.intent import IntentVector
 from gap_kernel.models.lineage import LineageRecord
 from gap_kernel.models.strategy import PlannedAction, StrategyProposal
 from gap_kernel.models.world import WorldModel
+
+
+def _proposal_targets(proposal: StrategyProposal) -> List[str]:
+    """Every DISTINCT target a proposal touches, in plan order.
+
+    A monitor that is told only about ``actions[0]`` cannot see the rest of the
+    plan, so an agent packs the sensitive action second and it is never observed
+    against its own target. Every action is reported instead.
+
+    Distinct, because one proposal is a SINGLE governance authorization: the
+    kernel evaluated the whole plan at one level, so repeating a target across
+    its actions is not threshold-avoidance decomposition. Counting it once per
+    action would manufacture a false GIM-3 alert; decomposition is splitting
+    across separate authorizations, which is still counted once each.
+    """
+    targets: List[str] = []
+    for action in proposal.actions:
+        if action.target and action.target not in targets:
+            targets.append(action.target)
+    return targets
 
 
 class StrategyGenerator(Protocol):
@@ -111,7 +132,7 @@ class RuleBasedStrategyGenerator:
             prior_rejection_id=(
                 prior_proposals[-1].id if prior_proposals else None
             ),
-            generated_at=datetime.utcnow(),
+            generated_at=utcnow(),
         )
         return proposal
 
@@ -375,13 +396,23 @@ class CGALoop:
         while attempt < self.max_attempts:
             attempt += 1
 
-            # 1. Generate strategy
+            # 1. Generate strategy. The generator is untrusted, deployment-supplied
+            #    code whose only sanctioned output is the proposal it returns, so it
+            #    gets a deep SNAPSHOT of every input rather than the live objects.
+            #    Handing over the live world model (or intent) is consent laundering
+            #    in ONE step, with no action executed at all: set
+            #    world_state.entities[t].properties["gdpr_consent"] = True, or drop the
+            #    hard constraint off the intent, and the very next kernel evaluation
+            #    reads the mutation and approves. Mutations now die on the copy, while
+            #    the kernel, the fabric and the reconciler keep evaluating and acting
+            #    on the caller's real model. The snapshot is faithful and re-taken each
+            #    attempt, so the generator still plans against current reality.
             proposal = self.strategy_gen.generate(
-                intent=intent,
-                world_state=world_state,
-                drift_event=drift_event,
-                accumulated_constraints=accumulated_constraints,
-                prior_proposals=proposals,
+                intent=deepcopy(intent),
+                world_state=deepcopy(world_state),
+                drift_event=deepcopy(drift_event),
+                accumulated_constraints=deepcopy(accumulated_constraints),
+                prior_proposals=deepcopy(proposals),
                 attempt_number=attempt,
             )
             proposals.append(proposal)
@@ -408,9 +439,11 @@ class CGALoop:
             # actually executes (below / in approve_and_execute) — an approved-but-
             # awaiting-OOB or escalated self-mod gains no capability and must not
             # inflate the velocity / surface / privilege counters.
-            target = proposal.actions[0].target if proposal.actions else None
+            # Every action is reported, not just the first — see _proposal_targets.
+            targets = _proposal_targets(proposal)
             if self.integrity_monitor is not None:
-                self.integrity_monitor.observe_decision(decision, target=target)
+                for target in targets or [None]:
+                    self.integrity_monitor.observe_decision(decision, target=target)
 
             # 3. Route based on verdict
             if decision.verdict == GovernanceVerdict.APPROVED:
@@ -451,7 +484,8 @@ class CGALoop:
                 # it has actually executed (realized), matching what the monitor
                 # claims to measure.
                 if execution_result.success and self.self_evolution_monitor is not None:
-                    self.self_evolution_monitor.observe_decision(decision, target=target)
+                    for target in targets or [None]:
+                        self.self_evolution_monitor.observe_decision(decision, target=target)
                 break
 
             elif decision.verdict == GovernanceVerdict.ESCALATE:
@@ -509,12 +543,14 @@ class CGALoop:
         authorization drift / decomposition, or — for a self-modification — a
         self-evolution capability-gain pattern (SA-4)."""
         action_type = decision.action_type_id or "unspecified"
-        target = proposal.actions[0].target if proposal.actions else None
         if self.integrity_monitor is not None:
             if self.integrity_monitor.check_authorization_drift(action_type) is not None:
                 return True
-            if target and self.integrity_monitor.check_decomposition(target) is not None:
-                return True
+            # Every target the plan touches, not just the first: a flagged target
+            # in a later action must hold the whole proposal.
+            for target in _proposal_targets(proposal):
+                if self.integrity_monitor.check_decomposition(target) is not None:
+                    return True
         # Self-evolution: hold a self-modification when the agent is in a flagged
         # capability-gain pattern (velocity / privilege accrual / surface expansion).
         if (
@@ -546,14 +582,14 @@ class CGALoop:
         decision.human_approval_signature = human_approval_signature
         decision.human_approver_public_key_id = approver_key_id
         decision.human_approval_valid_until = valid_until
-        decision.human_approval_timestamp = timestamp or datetime.utcnow()
+        decision.human_approval_timestamp = timestamp or utcnow()
         result = self.execution.execute(proposal, decision)
         # SA-4: an L2+ self-modification is realized here (when the human OOB
         # signature actually dispatches it), so it counts toward capability gain
         # only now — not when the loop first surfaced it as awaiting_approval.
         if result.success and self.self_evolution_monitor is not None:
-            target = proposal.actions[0].target if proposal.actions else None
-            self.self_evolution_monitor.observe_decision(decision, target=target)
+            for target in _proposal_targets(proposal) or [None]:
+                self.self_evolution_monitor.observe_decision(decision, target=target)
         return result
 
     def close(self) -> None:
@@ -626,10 +662,9 @@ class CGAResult:
         world_state_snapshot: dict,
     ) -> LineageRecord:
         """Build a complete lineage record from the CGA loop result."""
-        now = datetime.utcnow()
+        now = utcnow()
 
         # Detect conflict resolution info
-        conflicting = None
         deprioritized = None
         deprioritization_rationale = None
         priority_override = False

@@ -10,21 +10,19 @@ Tests for GAP spec additions dated 2026-02-20:
 """
 
 import hashlib
-from datetime import datetime
 
 import pytest
 
+from gap_kernel._time import utcnow
 from gap_kernel.execution.fabric import ExecutionFabric
 from gap_kernel.governance.kernel import (
     GovernanceKernel,
-    _build_uncertainty_declaration,
     _determine_auth_level,
     _determine_auth_tier,
 )
 from gap_kernel.models.governance import (
     ActionTypeSpec,
     AuthorizationLevel,
-    GovernancePhaseResult,
     GovernanceVerdict,
     PhaseConfig,
     RiskProfile,
@@ -34,12 +32,11 @@ from gap_kernel.models.intent import (
     Constraint,
     ConstraintType,
     IntentVector,
-    PolicyActivation,
 )
 from gap_kernel.models.lineage import ArtifactProvenance, LineageRecord
 from gap_kernel.models.strategy import PlannedAction, StrategyProposal
 from gap_kernel.models.world import EntityState, WorldModel
-from gap_kernel.strategy.cga_loop import CGALoop, RuleBasedStrategyGenerator
+from gap_kernel.strategy.cga_loop import CGALoop
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +58,7 @@ def _make_intent(intent_id="intent_test", with_gdpr=True):
         hard_constraints=hard,
         soft_constraints=[],
         created_by="test",
-        created_at=datetime.utcnow(),
+        created_at=utcnow(),
     )
 
 
@@ -79,7 +76,7 @@ def _make_proposal(intent_id="intent_test", action_type="send_email", risk=3, ta
         )],
         estimated_cost=0.10,
         rationale="Test",
-        generated_at=datetime.utcnow(),
+        generated_at=utcnow(),
     )
 
 
@@ -92,14 +89,14 @@ def _make_world_state(entity_id="lead_001", geo="EU", consent=False, confidence=
                 properties={
                     "geo": geo,
                     "gdpr_consent": consent,
-                    "created_at": datetime.utcnow().isoformat(),
+                    "created_at": utcnow().isoformat(),
                 },
-                last_updated=datetime.utcnow(),
+                last_updated=utcnow(),
                 source="test",
                 confidence=confidence,
             ),
         },
-        last_reconciled=datetime.utcnow(),
+        last_reconciled=utcnow(),
     )
 
 
@@ -393,7 +390,7 @@ class TestStructuredUncertainty:
         kernel = GovernanceKernel()
         proposal = _make_proposal(target="nonexistent_entity", action_type="route_to_human", risk=2)
         intent = _make_intent(with_gdpr=False)
-        world = WorldModel(entities={}, last_reconciled=datetime.utcnow())
+        world = WorldModel(entities={}, last_reconciled=utcnow())
 
         decision = kernel.evaluate_proposal(
             proposal=proposal,
@@ -407,7 +404,7 @@ class TestStructuredUncertainty:
         """Uncertainty flows from governance decision into lineage record."""
         kernel = GovernanceKernel()
         fabric = ExecutionFabric(
-            WorldModel(entities={}, last_reconciled=datetime.utcnow()),
+            WorldModel(entities={}, last_reconciled=utcnow()),
             kernel_public_key_hex=kernel.public_key_hex,
         )
         cga = CGALoop(
@@ -651,18 +648,21 @@ class TestAPINewFeatures:
         resp = client.get("/governance/action-types/nonexistent")
         assert resp.status_code == 404
 
-    def test_register_custom_action_type_via_api(self, client):
-        """POST /governance/action-types registers a new type."""
+    def test_action_type_registration_is_not_an_http_operation(self, client):
+        """
+        The Action Type Registry is governance configuration: it arrives inside
+        the signed Applicability Profile, not over the wire. There is no HTTP
+        route that writes it, so `registered_by` cannot be an unauthenticated
+        caller's free-text claim.
+        """
         resp = client.post("/governance/action-types", json={
             "type_id": "custom_analysis",
             "description": "Run a custom analysis",
             "default_authorization_level": "L2",
             "registered_by": "admin",
         })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["type_id"] == "custom_analysis"
+        assert resp.status_code == 405
 
-        # Verify it's now in the registry
-        resp2 = client.get("/governance/action-types/custom_analysis")
-        assert resp2.status_code == 200
+        # The type was not created as a side effect, and reads still work.
+        assert client.get("/governance/action-types/custom_analysis").status_code == 404
+        assert client.get("/governance/action-types").status_code == 200

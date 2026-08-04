@@ -1,10 +1,11 @@
 """Tests for the FastAPI API endpoints."""
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
+from gap_kernel._time import utcnow
 from gap_kernel.api.app import create_app
 from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.learning.engine import LearningEngine
@@ -15,7 +16,13 @@ from gap_kernel.world_model.store import WorldModelStore
 
 @pytest.fixture
 def client():
-    """Create a test client with fresh components."""
+    """A test client over the full surface.
+
+    ``enable_mutating_routes`` is explicit: the shipped app registers only the
+    read/evaluate surface, and a deployment opts into mutation behind its own
+    authenticated proxy. These tests exercise both halves, so they opt in the
+    same way a deployment does.
+    """
     world_store = WorldModelStore()
     governance = GovernanceKernel()
     lineage_store = LineageStore(db_path=":memory:")
@@ -28,6 +35,7 @@ def client():
         lineage_store=lineage_store,
         learning_engine=learning,
         reconciler_config=config,
+        enable_mutating_routes=True,
     )
 
     return TestClient(app)
@@ -228,7 +236,7 @@ class TestFullAPIScenario:
         assert cost_response.status_code == 200
 
         # 2. Simulate lead state — ingest EU lead that's been waiting
-        created_at = (datetime.utcnow() - timedelta(minutes=8)).isoformat()
+        created_at = (utcnow() - timedelta(minutes=8)).isoformat()
         ingest_response = client.post("/world/ingest", json={
             "entity_type": "lead",
             "entity_id": "lead_4821",
@@ -248,7 +256,7 @@ class TestFullAPIScenario:
         # 3. Trigger reconciliation
         reconcile_response = client.post("/reconciler/trigger")
         assert reconcile_response.status_code == 200
-        reconcile_data = reconcile_response.json()
+        reconcile_response.json()
 
         # 4. Inspect lineage
         lineage_response = client.get("/lineage")

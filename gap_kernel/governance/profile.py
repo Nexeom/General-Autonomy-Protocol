@@ -1,21 +1,23 @@
 """Applicability Profile — the signed, runtime-immutable Tier-1 floor (Fix 3).
 
-A deployment's Tier-1 (regulatory floor) constraints are declared in an
-``ApplicabilityProfile`` that is cryptographically signed by an authority key.
-The Governance Kernel verifies the signature on load and refuses any profile
-that is unsigned, tampered, or signed by an unregistered key — so the regulatory
-floor cannot be weakened, narrowed, or forged by the running system.
+A deployment's Tier-1 (regulatory floor) constraints and its declared action
+types are carried in an ``ApplicabilityProfile`` that is cryptographically
+signed by an authority key. The Governance Kernel verifies the signature on load
+and refuses any profile that is unsigned, tampered, or signed by an unregistered
+key — so neither the regulatory floor nor the Action Type Registry can be
+weakened, narrowed, or forged by the running system.
 """
 
 from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel
 
 from gap_kernel.crypto.signing import PublicKeyRegistry, sign, verify
+from gap_kernel.models.governance import ActionTypeSpec
 from gap_kernel.models.intent import Constraint
 
 
@@ -24,10 +26,17 @@ class ProfileVerificationError(Exception):
 
 
 class ApplicabilityProfile(BaseModel):
-    """A signed declaration of the Tier-1 regulatory floor for a deployment."""
+    """A signed declaration of a deployment's governance configuration.
+
+    Carries the Tier-1 regulatory floor and the action types the deployment is
+    authorized to take. Both are inside the signed payload, so both inherit the
+    profile's runtime immutability: the kernel seeds its Action Type Registry
+    from ``action_types`` at construction and refuses runtime writes.
+    """
 
     profile_id: str
     tier1_constraints: List[Constraint] = []
+    action_types: Dict[str, ActionTypeSpec] = {}
     issued_by: str = "regulatory_authority"
     issued_at: Optional[datetime] = None
     signature: Optional[str] = None        # hex Ed25519 over the canonical payload

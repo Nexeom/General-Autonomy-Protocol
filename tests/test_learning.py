@@ -1,9 +1,8 @@
 """Tests for the Learning Engine."""
 
-from datetime import datetime
 
-import pytest
 
+from gap_kernel._time import utcnow
 from gap_kernel.learning.engine import LearningEngine
 from gap_kernel.models.governance import GovernanceDecision, GovernanceVerdict
 from gap_kernel.models.intent import IntentVector
@@ -17,7 +16,7 @@ def _make_lineage_with_rejections(
     success: bool = True,
     geo: str = "EU",
 ) -> LineageRecord:
-    now = datetime.utcnow()
+    now = utcnow()
     intent = IntentVector(
         id="intent_1",
         objective="Test",
@@ -113,7 +112,7 @@ class TestLearningEngine:
 
     def test_no_learning_from_single_attempt(self):
         """No heuristic should be learned from a single-attempt success."""
-        now = datetime.utcnow()
+        now = utcnow()
         record = LineageRecord(
             id="lin_simple",
             cycle_id="cycle_simple",

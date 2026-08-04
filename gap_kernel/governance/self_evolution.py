@@ -38,6 +38,7 @@ from typing import List, Optional, Set
 
 from pydantic import BaseModel
 
+from gap_kernel._time import utcnow
 from gap_kernel.governance.integrity_monitor import IntegritySignal, _RANK, _cap
 
 _DEFAULT_SELF_MODIFYING = frozenset({"skill_modification"})
@@ -98,7 +99,7 @@ class SelfEvolutionMonitor:
             action_type=action_type,
             rank=_RANK[authorization_level],
             target=target,
-            at=timestamp or datetime.utcnow(),
+            at=timestamp or utcnow(),
         )
         self._mods.append(mod)
         _cap(self._mods, self._max_history)

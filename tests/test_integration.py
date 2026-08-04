@@ -1,7 +1,8 @@
 """Integration — SIR readiness gate and GIM observation wired into the CGA loop."""
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
+from gap_kernel._time import utcnow
 from gap_kernel.execution.fabric import ExecutionFabric
 from gap_kernel.governance.integrity_monitor import GovernanceIntegrityMonitor
 from gap_kernel.governance.kernel import GovernanceKernel
@@ -24,17 +25,17 @@ class _Gen:
             id=f"prop_{attempt_number}", intent_id=intent.id, attempt_number=attempt_number,
             plan_description="op",
             actions=[PlannedAction(action_type="query_crm", target=self.target, parameters={}, risk_score=self.risk)],
-            estimated_cost=0.01, rationale="r", generated_at=datetime.utcnow(),
+            estimated_cost=0.01, rationale="r", generated_at=utcnow(),
         )
 
 
 def _intent():
     return IntentVector(id="i1", objective="o", priority=50, hard_constraints=[],
-                        soft_constraints=[], created_by="t", created_at=datetime.utcnow())
+                        soft_constraints=[], created_by="t", created_at=utcnow())
 
 
 def _world():
-    return WorldModel(entities={}, last_reconciled=datetime.utcnow())
+    return WorldModel(entities={}, last_reconciled=utcnow())
 
 
 def _loop(**kw):
@@ -82,7 +83,7 @@ def test_sir_gate_l0_requires_valid_standing():
     )
     standing = StandingIntentDeclaration(
         standing_id="s1", intent_class="routine", declaration=standing_decl,
-        authored_by="ops_lead", expires_at=datetime.utcnow() + timedelta(days=1),
+        authored_by="ops_lead", expires_at=utcnow() + timedelta(days=1),
     )
     ok = loop.run(intent=_intent(), drift_event={}, world_state=_world(),
                   intent_declaration=decl, standing=standing)

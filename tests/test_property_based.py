@@ -5,6 +5,12 @@ load-bearing invariant: it FAILS CLOSED, never FAILS CRASHED. Arbitrary action
 parameters, constraint thresholds, and observation streams must never raise an
 uncaught exception out of the kernel or the monitors — a class of bug
 (crash-on-malformed-input) that example-based tests miss.
+
+Robustness is only half of it: returning *a* verdict is not returning the RIGHT
+one, and nothing here would notice a kernel that approved everything. The
+enforcement-semantic half — a violated HARD constraint is never approved, no
+authorization is granted below its own floor, a governed decision always carries
+its single-use binding — lives in :mod:`tests.test_enforcement_properties`.
 """
 
 from datetime import datetime, timedelta
@@ -12,6 +18,7 @@ from datetime import datetime, timedelta
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from gap_kernel._time import utcnow
 from gap_kernel.governance.integrity_monitor import GovernanceIntegrityMonitor
 from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.governance.self_evolution import SelfEvolutionMonitor
@@ -57,17 +64,17 @@ def test_regulatory_evaluation_never_crashes(constraint_name, params, action_typ
         id="i1", objective="o", priority=50,
         hard_constraints=[Constraint(name=constraint_name, type=ConstraintType.HARD,
                                      description=description, threshold=threshold)],
-        soft_constraints=[], created_by="t", created_at=datetime.utcnow(),
+        soft_constraints=[], created_by="t", created_at=utcnow(),
     )
     proposal = StrategyProposal(
         id="p1", intent_id="i1", attempt_number=1, plan_description="x",
         actions=[PlannedAction(action_type=action_type, target="t1",
                                parameters=params, risk_score=1)],
-        estimated_cost=0.01, rationale="r", generated_at=datetime.utcnow(),
+        estimated_cost=0.01, rationale="r", generated_at=utcnow(),
     )
     decision = kernel.evaluate_proposal(
         proposal=proposal, intents=[intent],
-        world_state=WorldModel(entities={}, last_reconciled=datetime.utcnow()),
+        world_state=WorldModel(entities={}, last_reconciled=utcnow()),
     )
     assert decision.verdict in _VERDICTS
 

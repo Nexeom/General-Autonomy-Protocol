@@ -7,7 +7,7 @@
 > communication operates, not how to build the internet. GAP is the governance
 > substrate: the rules of the road for machines that drive themselves.
 
-**Complete Build Summary**
+**Normative Protocol Specification**
 
 **Nexeom** — February 2026
 
@@ -18,6 +18,11 @@
 > **[Conformance & Maturity Statement](CONFORMANCE.md)**. Treat unqualified
 > structural language here as a requirement on conformant implementations, not a
 > claim that every deployment already meets it.
+>
+> 🗺️ **Non-normative material lives elsewhere.** The strategic roadmap, business
+> model, and competitive positioning that this document previously carried are in
+> [`ROADMAP.md`](ROADMAP.md). They are not conformance obligations and were moved
+> so that this document is requirements only.
 
 ---
 
@@ -29,9 +34,7 @@ The core thesis: Intelligence without autonomy is a research project. Autonomy w
 
 The industry narrative arc: First we built intelligence (LLMs). Then we built agency (agent frameworks, tool use). The missing third layer is **autonomy** — governed, accountable, general-purpose autonomous action. GAP is the protocol that standardizes this layer.
 
----
-
-## Architecture
+### 1.1 Architecture at a Glance
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -54,9 +57,7 @@ The industry narrative arc: First we built intelligence (LLMs). Then we built ag
 └─────────────────────────────────────────────────────┘
 ```
 
----
-
-## Key Mechanisms
+### 1.2 Key Mechanisms
 
 | Mechanism | Description |
 |---|---|
@@ -70,30 +71,22 @@ The industry narrative arc: First we built intelligence (LLMs). Then we built ag
 | **Out-of-Band Authority Verification** | L2+ authorization channels must be independent of the agent's environment. Human identity verified through channels the agent cannot access. |
 | **Dynamic Risk Escalation** | Runtime authorization tier adjustment based on behavioral signals. The kernel escalates governance when patterns diverge from baseline. |
 | **Structured Intent Resolution (SIR)** | Governs the human-AI intent transfer. Formal declaration, meta-intent inference, mutual confirmation before autonomous action begins. |
-| **Governance Integrity Monitoring (GIM)** | Dynamic behavioral monitoring for indirect governance erosion. Five signal classes with independent evaluation. |
+| **Governance Integrity Monitoring (GIM)** | Dynamic behavioral monitoring for indirect governance erosion. Five signal classes, which a conformant implementation must evaluate independently of the system being monitored. (The reference implementation does **not** meet that independence requirement — see the GIM spec's implementation-status section.) |
 | **Policy Tier Classification** | Three-tier policy hierarchy: immutable regulatory floor, client-configurable organizational policy, agent-tunable operational parameters. Lower tiers cannot exceed upper tier bounds. |
 | **Applicability Profiles** | Deployment-time governance scoping. Selects active regulatory constraint categories based on domain, jurisdiction, and action types. Proportional governance — right constraints for right actions. |
 | **Regulatory Constraint Categories** | Eight categories of legal obligation — three universal (data privacy, communications, transparency), five domain-activated — populating the Tier 1 regulatory floor. |
 
----
+### 1.3 Action Type Specifications
 
-## Action Type Specifications
+GAP's Action Type Registry enables domain-specific governance without protocol modification. The following Action Type specifications are published:
 
-GAP's Action Type Registry enables domain-specific governance without protocol modification. The following Action Type specifications are available:
+| Specification | Action Type | Spec status | Reference implementation |
+|---|---|---|---|
+| [GAP-AT-FIN-001](../action-types/financial_transaction.md) | `financial_transaction` | Draft | **Not implemented.** No `financial_transaction` action type, SpendGate, or financial provenance model exists in `gap_kernel/`. |
 
-| Specification | Action Type | Description |
-|---|---|---|
-| [GAP-AT-FIN-001](action-types/financial_transaction.md) | `financial_transaction` | Governance for autonomous financial operations — SpendGate mechanism, financial provenance, dual audit trail |
+`GAP-AT-FIN-001` is a **published specification without a reference implementation**. It describes the SpendGate constraint stack, financial provenance fields, and dual audit trail that a conformant financial deployment must provide; none of it ships in this repository. A deployment that needs governed financial action must build it. The kernel's `cost_ceiling` constraint evaluator is a budget check, not SpendGate — it enforces a single spend ceiling and implements none of the session-budget, frequency-cap, vendor-whitelist, or risk-classification layers the specification requires.
 
-See [action-types/](action-types/) for all specifications.
-
----
-
-## Where GAP Sits
-
-GAP does not compete with LLM providers (OpenAI, Anthropic, Google) on intelligence, nor with agent frameworks (LangChain, CrewAI, AutoGen) on agency. GAP defines the third layer — the governance infrastructure that makes everything they built deployable in institutional contexts. The differentiator is structural: competitors have chat logs. GAP systems have Decision Records.
-
-The positioning against existing governance and compliance tools: NIST, ISO, and EU AI Act tell organizations *what* to govern. GAP tells them *how* to govern it in real-time, autonomously.
+See [`action-types/`](../action-types/) for all specifications.
 
 ---
 
@@ -125,9 +118,11 @@ GAP operates through three structurally distinct layers. Governance is not a che
 
 ### Layer 1: Governance Kernel (Immutable)
 
-The foundational governance layer that cannot be modified by the autonomous system itself. It defines authority boundaries, policy constraints, and escalation thresholds. The Iron Rule governs all system evolution: learning may modify strategy weights and skills through GAP governance, but never governance policy boundaries without explicit human approval. Enforcement is structural: governed agents operate in execution environments that are architecturally isolated from governance infrastructure. The agent cannot access, read, modify, or reason about the Governance Kernel's code, configuration, or enforcement mechanisms. This is not a permission the agent lacks — it is a path that does not exist. Policy enforcement governs what the agent should not do. Structural enforcement determines what the agent cannot do. GAP-compliant implementations must implement structural isolation of governance infrastructure from governed agent execution environments.
+The foundational governance layer that cannot be modified by the autonomous system itself. It defines authority boundaries, policy constraints, and escalation thresholds. The Iron Rule governs all system evolution: learning may modify strategy weights and skills through GAP governance, but never governance policy boundaries without explicit human approval. Enforcement is structural rather than procedural. Policy enforcement governs what the agent *should not* do; structural enforcement determines what it *cannot* do. A GAP-compliant implementation MUST isolate governance infrastructure from the governed agent's execution environment, such that the agent cannot read, modify, or forge the Governance Kernel's code, configuration, or enforcement mechanisms — the guarantee is the absence of a path, not a permission the agent has been denied.
 
-Governance Integrity Monitoring (GIM) extends the Iron Rule from a static architectural guarantee to a dynamic behavioral guarantee. While the Iron Rule ensures the system cannot modify governance configuration, GIM ensures the system cannot indirectly erode governance effectiveness through behavioral adaptation. GIM defines five monitoring requirements across authorization drift, audit behavior divergence, threshold-avoidance decomposition, escalation framing bias, and adversarial collapse. Together with the Iron Rule and human oversight, GIM forms a three-layer defense in depth: architectural (static), behavioral (dynamic), and institutional (judgment). See the [GIM specification](docs/gap-governance-integrity-monitoring.md) for full requirements.
+This is a normative requirement, and it is the requirement this repository's reference implementation meets least completely: the kernel's signing key and governance configuration are isolated out of process, but signature *verification* still runs inside the agent's process. See the [Conformance Statement](CONFORMANCE.md) and [Threat Model](THREAT_MODEL.md) for exactly which part of this requirement is earned today.
+
+Governance Integrity Monitoring (GIM) extends the Iron Rule from a static architectural guarantee to a dynamic behavioral guarantee. While the Iron Rule ensures the system cannot modify governance configuration, GIM ensures the system cannot indirectly erode governance effectiveness through behavioral adaptation. GIM defines five monitoring requirements across authorization drift, audit behavior divergence, threshold-avoidance decomposition, escalation framing bias, and adversarial collapse. Together with the Iron Rule and human oversight, GIM forms a three-layer defense in depth: architectural (static), behavioral (dynamic), and institutional (judgment). See the [GIM specification](gap-governance-integrity-monitoring.md) for full requirements, including its implementation-status section.
 
 - Graduated authorization levels (L0–L4) from fully autonomous to human-required
 - Temporal policy activation — policies can be time-bound and context-sensitive
@@ -149,9 +144,20 @@ The protocol defines six baseline action types:
 | `policy_proposal` | Proposing a change to governance policy (human decides) |
 | `outbound_communication` | Sending any communication to a human recipient outside the governed system — email, SMS, chat message, automated voice, notification, or any other channel that reaches an individual |
 
+> **Implementation status.** The reference kernel's baseline registry
+> (`gap_kernel/governance/kernel.py`, `_BASELINE_ACTION_TYPES`) contains **five**
+> of these six: `task_execution` (L0), `skill_modification` (L2),
+> `drift_reconciliation` (L1), `escalation` (L0), and `policy_proposal` (L4).
+> `outbound_communication` is specified here but **is not registered** — a
+> deployment that sends communications must supply it in its Applicability
+> Profile, and under strict action typing an unregistered type is rejected rather
+> than silently governed at a default.
+
 The `outbound_communication` action type is a protocol-level baseline because communications compliance applies universally — virtually every enterprise deployment involves an autonomous agent sending messages to humans. Unlike domain-specific action types that are registered per deployment, `outbound_communication` exists in every GAP-compliant system's Action Type Registry by default. The action type carries default governance configuration: Communications Compliance Constraints (Category 2) are always evaluated. Data Privacy Constraints (Category 1) are evaluated when the communication contains or references personal data. The default authorization level is L1 (Notify) for routine operational communications and L2 (Approve Before) for communications that are commercial, mass-distributed, or directed to recipients with whom no prior business relationship exists. Tier 2 organizational policies may further restrict `outbound_communication`: specifying approved sender accounts, defining permitted communication channels, setting volume limits, restricting recipient jurisdictions, requiring human review for specific communication types, and enforcing tone or content guidelines. These operate above the Tier 1 regulatory floor.
 
 GAP-adopting systems may register additional action types to govern domain-specific autonomous actions. Each registered type must specify: a unique type identifier, a risk profile assessing impact scope, reversibility, and blast radius, a default authorization level (L0–L4, overridable by policy), applicable governance policies, escalation configuration, and phase configuration (single-gate or multi-phase — see Multi-Phase Authorization below). Registering a new action type is itself a governed action requiring human authorization. Autonomous systems cannot register new action types.
+
+> **Implementation status.** This is enforced. In the reference kernel the Action Type Registry is carried inside the signed Applicability Profile, so the set of governable action types is fixed by the authority that signs the profile. A governed kernel **refuses** `register_action_type` outright; there is no RPC method and no HTTP route for it. The permissive open-mode constructor still allows runtime registration, but only as a monotonic ratchet — a registered type cannot be replaced, and no type may be registered below the authorization level its declared risk profile implies.
 
 #### Multi-Phase Authorization (Added 2026-02-20)
 
@@ -346,7 +352,7 @@ SIR depth is proportional to authorization level: L0 operations use standing int
 
 Governance begins at intent, not at action. A governance chain that starts after the system has already interpreted what the human wants is a governance chain with an ungoverned origin.
 
-See the [SIR specification](docs/gap-structured-intent-resolution.md) for full requirements.
+See the [SIR specification](gap-structured-intent-resolution.md) for full requirements, including its implementation-status section.
 
 ### Layer 2: Strategy Layer (Constraint-Guided Autonomy)
 
@@ -504,64 +510,33 @@ While RGAP cannot capture full internal deliberation lineage, it captures the co
 
 ### Stack
 
+This section describes the **reference implementation** in this repository. It is
+not a conformance requirement — GAP prescribes properties, not a stack.
+
 | Component | Technology | Rationale |
 |---|---|---|
-| Language | Python 3.11+ | Ecosystem for LLM tooling |
-| State Machine | LangGraph | Checkpointable agentic workflows |
-| API | FastAPI | Async, typed, auto-documented |
+| Language | Python 3.11–3.13 | Ecosystem for LLM tooling |
 | Data Validation | Pydantic v2 | All data structures typed and validated |
-| Hashing | SHA-256 | Lineage chain integrity |
-| Testing | pytest | Scenario-based validation |
+| Signatures | Ed25519 (`cryptography`) | Decision, lineage, profile, OOB approval, and SIR seal signing |
+| Hashing | SHA-256 | Lineage chain linkage under the Ed25519 signature |
+| Temporal policy | `croniter` | Scheduled constraint activation windows |
+| API *(optional extra)* | FastAPI | Async, typed, auto-documented REST surface |
+| Testing | pytest | Scenario-based and adversarial validation |
+
+The kernel's runtime dependencies are `pydantic`, `croniter`, and `cryptography`
+only — the kernel is the component that holds the signing key, so its dependency
+surface is kept minimal deliberately. FastAPI and uvicorn are an `[api]` extra;
+the governance core runs without them. **There is no LangGraph dependency and no
+LangGraph integration** — an earlier revision of this table named it as the state
+machine, which was never accurate.
 
 ### Initial Use Case: CRM Lead Response Compliance
 
-The prototype demonstrates GAP governing autonomous CRM lead responses under GDPR compliance constraints while meeting SLA requirements. This is a deliberately constrained scope chosen to prove generality of architecture: the Governance Kernel operates on abstract Decision Records, and domain knowledge (CRM, GDPR) lives entirely in the Strategy Layer. The kernel does not know or care that it is governing a CRM workflow.
+The reference implementation's worked example is GAP governing autonomous CRM lead responses under GDPR consent and contact-hour constraints while meeting SLA requirements. It is exercised through the default rule-based strategy generator and the test suite; there is no separate demo application. This is a deliberately constrained scope chosen to prove generality of architecture: the Governance Kernel operates on abstract Decision Records, and domain knowledge (CRM, GDPR) lives entirely in the Strategy Layer. The kernel does not know or care that it is governing a CRM workflow.
 
 ---
 
-## 8. Strategic Roadmap
-
-**Phase 1: Protocol Establishment (Now)**
-- Ship GAP as an open-source protocol standard
-- Publish the General Autonomy manifesto to establish the category
-- Position Nexeom as the first GAP-native Decision Intelligence platform
-- Begin capturing Decision Lineage data from early adopters
-
-**Phase 2: Commercial Bridge (6–12 Months)**
-- Launch RGAP as a commercial managed service for existing agentic frameworks
-- Open-source one reference RGAP adapter (LangGraph) as proof of concept
-- Build production-grade RGAP adapters for LangChain, CrewAI, AutoGen
-- Build Decision Forecasting on top of accumulated lineage data
-
-**Phase 3: Ecosystem Expansion (12–24 Months)**
-- Federated GAP: cross-organization autonomous systems negotiating through shared protocol
-- GAP certification standard for enterprise procurement ("Is your system GAP-compliant?")
-- Integration as runtime governance layer for NIST, ISO, EU AI Act compliance
-- Decision Accountability Score — the defining metric for the General Autonomy category
-
----
-
-## 9. Business Model
-
-| Asset | Model | Revenue Mechanism |
-|---|---|---|
-| **GAP Core** | Open-Source | Builds adoption moat and protocol standard. Free forever. |
-| **RGAP Adapters** | Commercial SaaS | Managed integration service. Bridge revenue while market migrates to GAP-native. |
-| **Nexeom Platform** | Enterprise SaaS | Full GAP-native Decision Intelligence platform. Executive dashboards, audit infrastructure. |
-| **Certification** | Consulting + Tooling | GAP compliance certification, audit tooling, enterprise consulting. |
-| **Constraint Library** | Proprietary Data | Denial-and-constraint prompt corpus compounds with scale. Proprietary intelligence. |
-
----
-
-## 10. Competitive Position
-
-GAP does not compete with LLM providers (OpenAI, Anthropic, Google) on intelligence, nor with agent frameworks (LangChain, CrewAI, AutoGen) on agency. GAP defines the third layer — the governance infrastructure that makes everything they built deployable in institutional contexts. The differentiator is structural: competitors have chat logs. GAP systems have Decision Records.
-
-The positioning against existing governance and compliance tools: NIST, ISO, and EU AI Act tell organizations *what* to govern. GAP tells them *how* to govern it in real-time, autonomously.
-
----
-
-## 11. Key Design Principles
+## 8. Key Design Principles
 
 - **The Iron Rule:** Learning modifies strategy weights and skills. Never governance policy boundaries. Human authority over constraints is inviolable. Enforcement is structural, not just procedural — governed agents operate in environments architecturally isolated from governance infrastructure. There is no path to modify what cannot be accessed.
 
@@ -587,7 +562,24 @@ The positioning against existing governance and compliance tools: NIST, ISO, and
 
 - **Proportional Governance (Added 2026-03-15):** Governance scales with risk, not uniformly. A scheduling agent and a lending agent do not carry the same governance burden because they do not carry the same legal and operational risk. The Applicability Profile mechanism ensures that each deployment is governed proportionally to what the agent actually does, the data it handles, the jurisdictions it operates in, and the consequences of its actions. This is not optional flexibility — it is a design requirement. Over-governance makes autonomous systems unusable. Under-governance makes them unsafe. Proportional governance achieves both deployability and trust by applying the right constraints to the right actions. Every major regulatory framework — the EU AI Act, NIST AI RMF, ISO 42001, Colorado AI Act — uses risk-based classification. Proportional Governance is GAP's structural implementation of this principle.
 
-- **Adversarial Integrity Verification (Recommendation — Added 2026-02-23):** *Non-normative.* GAP-compliant implementations should periodically subject the Governance Kernel's structural isolation to adversarial testing by an independent evaluation entity. The Iron Rule's structural enforcement — that governed agents cannot access governance infrastructure — is a critical security property. Verification that this property holds under adversarial conditions should not rely solely on design-time analysis. Recommended practice includes: red-team testing by agents specifically designed to discover paths to governance infrastructure, automated scanning for isolation boundary violations, and formal verification of process isolation mechanisms where feasible. Organizations seeking GAP certification (Phase 3 roadmap) should expect adversarial integrity verification as a certification requirement.
+- **Adversarial Integrity Verification (Recommendation — Added 2026-02-23):** *Non-normative.* GAP-compliant implementations should periodically subject the Governance Kernel's structural isolation to adversarial testing by an independent evaluation entity. The Iron Rule's structural enforcement — that governed agents cannot access governance infrastructure — is a critical security property. Verification that this property holds under adversarial conditions should not rely solely on design-time analysis. Recommended practice includes: red-team testing by agents specifically designed to discover paths to governance infrastructure, automated scanning for isolation boundary violations, and formal verification of process isolation mechanisms where feasible. Organizations seeking GAP certification (see [`ROADMAP.md`](ROADMAP.md)) should expect adversarial integrity verification as a certification requirement.
+
+> **Note on this repository.** The adversarial reviews recorded in `docs/` were
+> run by the project itself, not by an independent evaluation entity. This
+> recommendation is therefore unmet here. See the audits' metadata blocks.
+
+---
+
+## Related documents
+
+| Document | What it is |
+|---|---|
+| [`CONFORMANCE.md`](CONFORMANCE.md) | What the reference implementation enforces and verifies today, versus what this document requires. Normative claims here are gated by that matrix. |
+| [`ROADMAP.md`](ROADMAP.md) | Non-normative: strategic roadmap, business model, competitive positioning. Formerly §8–§10 of this document. |
+| [`gap-governance-integrity-monitoring.md`](gap-governance-integrity-monitoring.md) | GIM extension specification (GIM-1…GIM-5). |
+| [`gap-structured-intent-resolution.md`](gap-structured-intent-resolution.md) | SIR extension specification (SIR-1…SIR-5). |
+| [`../action-types/`](../action-types/) | Published Action Type specifications. |
+| [`REMEDIATION_PLAN.md`](REMEDIATION_PLAN.md) | Historical record of the build-to-earn remediation program. |
 
 ---
 

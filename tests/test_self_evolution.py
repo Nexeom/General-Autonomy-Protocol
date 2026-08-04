@@ -7,6 +7,7 @@ on the CGA loop when the agent is in a flagged capability-gain pattern.
 
 from datetime import datetime, timedelta
 
+from gap_kernel._time import utcnow
 from gap_kernel.execution.fabric import ExecutionFabric
 from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.governance.self_evolution import SelfEvolutionMonitor
@@ -129,17 +130,17 @@ class _SkillModGen:
             id=f"prop_{attempt_number}", intent_id=intent.id, attempt_number=attempt_number,
             plan_description="modify a skill",
             actions=[PlannedAction(action_type="query_crm", target="skill_x", parameters={}, risk_score=1)],
-            estimated_cost=0.01, rationale="r", generated_at=datetime.utcnow(),
+            estimated_cost=0.01, rationale="r", generated_at=utcnow(),
         )
 
 
 def _intent():
     return IntentVector(id="i1", objective="o", priority=50, hard_constraints=[],
-                        soft_constraints=[], created_by="t", created_at=datetime.utcnow())
+                        soft_constraints=[], created_by="t", created_at=utcnow())
 
 
 def _world():
-    return WorldModel(entities={}, last_reconciled=datetime.utcnow())
+    return WorldModel(entities={}, last_reconciled=utcnow())
 
 
 def _loop(monitor, *, block):

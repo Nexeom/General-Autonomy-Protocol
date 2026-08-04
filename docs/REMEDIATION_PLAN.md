@@ -1,5 +1,12 @@
 # GAP Remediation Roadmap — "Build to Earn Every Claim"
 
+> 📌 **Historical record.** This document is the plan the remediation program was
+> executed against, kept for provenance. Its "Current state" table describes the
+> **pre-remediation** codebase (June 2026) and is not a description of the code
+> today. For current status use
+> **[`CONFORMANCE.md`](CONFORMANCE.md)** — where this plan and CONFORMANCE
+> disagree, CONFORMANCE is authoritative.
+
 ## Context
 
 **Why this exists.** The March 2026 governance & safety audit
@@ -41,12 +48,27 @@ now holds.
 | 4 | Real OOB verification | **Stub.** `_verify_oob_authority` checks that two string fields are non-empty; replay protection is an in-memory `set`. No cryptographic signature, no persistence. | `gap_kernel/execution/fabric.py:122-157`; `gap_kernel/models/governance.py` OOB fields |
 | 5 | Signed external lineage | **Partial.** SHA-256 hash chain (not a signature), SQLite `:memory:` default (no external anchor / WORM), in-process verifier, **zero tamper tests**. | `gap_kernel/lineage/store.py:30`, `:84`, `:186-217`; `tests/test_lineage.py` |
 | 6 | Governance Integrity Monitoring | **Not started.** 0 lines; spec only in `docs/gap-governance-integrity-monitoring.md` (GIM-1..GIM-5). SIR likewise spec-only. | new `gap_kernel/governance/integrity_monitor.py`; `tests/test_gim.py` |
-| 7 | Conformance / maturity statement | **Missing.** The spec asserts structural guarantees throughout with no normative-vs-verified distinction (the public `README.md` carries condensed echoes). | `docs/PROTOCOL_SPECIFICATION.md:57,120,126,131,188-212,234,365,435-436,558`; new conformance matrix |
+| 7 | Conformance / maturity statement | **Missing.** The spec asserts structural guarantees throughout with no normative-vs-verified distinction (the public `README.md` carries condensed echoes). | `docs/PROTOCOL_SPECIFICATION.md` — the structural-guarantee language, by section (see note below); new conformance matrix |
 | SA-5 | Adversarial assurance | **Absent.** 133 tests, ~95% happy-path; no tamper test, no constraint-negotiation test, no kernel-bypass test. | `tests/` (new adversarial suite) |
 
 Reconciler Tiers 1–3 (ML/cognitive/adversarial) are intentionally "reserved for
 production" (`gap_kernel/reconciler/loop.py`) and are **out of scope** here; Tier 0
 rule-based drift is implemented and sufficient for this program.
+
+> **Note on the Fix 7 targets.** Two earlier revisions of this plan cited two
+> different, mutually inconsistent line-number lists for the specification's
+> structural-guarantee language (`:57,120,126,131,188-212,234,365,435-436,558`
+> here and `:57,120,131,190,194,206,234,435-436,558` in Phase G). Both were
+> already stale when written — several entries pointed at horizontal rules
+> (`57`, `120`) or at the non-normative competitive-positioning prose (`558`),
+> which has since moved to [`ROADMAP.md`](ROADMAP.md). Line numbers into a living
+> document are the wrong anchor. The actual Fix-7 targets, by section, are: the
+> Iron Rule / structural-enforcement paragraph (§3, Layer 1), Policy Tier
+> Classification's Tier-1 guarantee (§3), Applicability Profiles' boundary
+> enforcement (§3), the Execution Fabric / OOB requirements (§3, Layer 3),
+> Decision Records as legal authorization evidence (§4), and the Iron Rule
+> principle (§8) — each now gated by the specification's normative-vs-implemented
+> disclaimer and by [`CONFORMANCE.md`](CONFORMANCE.md).
 
 ---
 
@@ -108,8 +130,8 @@ The hardest lift; makes "a path that does not exist" true.
 
 ### Phase G — Adversarial assurance + conformance (SA-5 + Fix 7) · **S–M** · cross-cutting, finalized last
 - Build the adversarial suite that proves the claims: lineage tamper, CGA negotiating around a hard constraint (must fail), threshold-decomposition (Phase F), OOB spoof/replay (Phase B), kernel-bypass/forged-decision (Phase E).
-- **Fix 7 as a *living* conformance matrix:** seed it at Phase A start (every claim tagged *normative requirement* vs *implemented & verified*), and flip rows to "verified" as each phase lands. Because we are *earning* the claims, the strong specification language (`docs/PROTOCOL_SPECIFICATION.md:57,120,131,190,194,206,234,435-436,558`, echoed in `README.md`) stays — but is gated behind the matrix until its phase is green.
-- **Verify:** full regression (currently ~133 tests) green at every phase boundary; the matrix shows no claim marked "verified" without a passing adversarial test.
+- **Fix 7 as a *living* conformance matrix:** seed it at Phase A start (every claim tagged *normative requirement* vs *implemented & verified*), and flip rows to "verified" as each phase lands. Because we are *earning* the claims, the strong specification language in `docs/PROTOCOL_SPECIFICATION.md` (the sections listed in the Fix 7 note above, echoed in `README.md`) stays — but is gated behind the matrix until its phase is green.
+- **Verify:** full regression (~133 tests at the time this plan was written) green at every phase boundary; the matrix shows no claim marked "verified" without a passing adversarial test.
 
 ---
 
@@ -158,7 +180,7 @@ continuous.
 ## Verification (how we'll know it's earned)
 - Per-phase tests listed above; **full suite green at every phase boundary** (regression gate).
 - The Phase-G adversarial suite is the capstone: no structural-guarantee claim is marked "verified" in the conformance matrix until its adversarial test passes (tamper fails, negotiation around a hard constraint fails, decomposition detected, forged/replayed authorization rejected, kernel un-importable from the agent process).
-- Run: `pip install -e .` then `pytest` from the repo root (current suite ~133 tests).
+- Run: `pip install -e ".[dev]"` then `pytest` from the repo root. (The suite was ~133 tests when this plan was written; it is **550** today.)
 
 ---
 
@@ -202,10 +224,14 @@ was written against (head of `claude/gap-kernel-implementation-25Zt0`, 2026-06-2
   registry (`tests/test_kernel_service.py`, incl. a real subprocess). A client is
   a drop-in for the kernel in CGALoop. Only hardware/OS-sandbox isolation remains
   a deployment concern.
-- ✅ **Phase F (Fix 6) — landed.** Independent rule-based GIM
+- ✅ **Phase F (Fix 6) — landed.** Rule-based GIM
   (`governance/integrity_monitor.py`): GIM-1 authorization drift + GIM-3
-  threshold-avoidance decomposition. `tests/test_gim.py`. GIM-2/4/5 + a
-  separate-model classifier remain Normative/Planned.
+  threshold-avoidance decomposition. `tests/test_gim.py`. *(Superseded: GIM-2,
+  GIM-4 and GIM-5 were subsequently built — the metric math, thresholds and
+  alerting all exist and are tested. Only a separate-**model** classifier remains
+  Normative/Planned. See CONFORMANCE for the honest scope: GIM-5 is unfed on any
+  shipped path, and GIM-2/GIM-4 compute over telemetry the deployment must
+  supply.)*
 - ✅ **Phase H (Fix 4 supply side) — landed.** CGA loop gates L2+ to
   `awaiting_approval` (no auto-execute); `approve_and_execute` attaches a human
   OOB signature obtained off-channel. `tests/test_approval_gating.py`.
@@ -214,7 +240,24 @@ was written against (head of `claude/gap-kernel-implementation-25Zt0`, 2026-06-2
   **`docs/CONFORMANCE.md`** matrix (normative vs. implemented & verified), linked
   from README + spec.
 
-**Status: Fixes 1–6 built and verified; Phases A–H complete.** Remaining as
-explicitly-marked Normative/Planned (see CONFORMANCE.md): out-of-process kernel
-isolation (Fix 2 deployment topology), GIM-2/4/5 + separate-model classifier,
-Reconciler Tiers 1–3, and SIR.
+**Status: Fixes 1–6 built and verified; Phases A–H complete.**
+
+### Corrections to this status line
+
+The paragraph that followed listed four items as "remaining as explicitly-marked
+Normative/Planned". Three of the four were wrong, and contradicted
+[`CONFORMANCE.md`](CONFORMANCE.md) — which is authoritative. Corrected:
+
+| Listed as remaining | Actual status |
+|---|---|
+| **Out-of-process kernel isolation** ("Fix 2 deployment topology") | **Built, and now the default.** `build_governed_deployment(isolated=True)` and `create_app(isolated=True)` run the kernel — with its signing key and registry — in a child process by default; the agent side holds only the public key and a request channel. What actually remains is OS/hardware sandboxing *of that subprocess*, which is deployment topology. Note the boundary protects the signing key and registry, **not** the enforcement point: the `ExecutionFabric` that verifies decision signatures still runs in the agent process. |
+| **GIM-2/4/5** | **Built.** Detectors, thresholds and alerting all exist and are tested; GIM-4 is fed from real human escalation resolutions on the shipped path. Honestly scoped: GIM-5 is unfed on any shipped path, GIM-2 needs deployment-supplied audit-mode telemetry, and only the separate-**model** classifier is Normative/Planned. |
+| **SIR** (listed wholesale) | **Partial, not absent.** SIR-1, SIR-3, SIR-4 and SIR-5 are implemented and wired into the CGA loop as an opt-in readiness gate; SIR-2 meta-intent inference exists as a rule-based (keyword) inference presented to the human as advisory. Still true: the shipped `ReconcilerLoop` and REST API run CGA **without** the SIR gate, `declared_boundaries` is captured but never enforced, and `verify_seal` has no callers outside tests. |
+| **Reconciler Tiers 1–3** | Correct as written — still unimplemented and out of scope. |
+
+An **independent authorization review** (`governance/independent_review.py`) was
+also added after this plan was written, giving GIM-1 the self-vs-independent
+comparison axis the spec asks for. Its reference classifier is a keyword
+heuristic over the action name and parameters and is **defeated by renaming an
+action**; a model-backed classifier is the pluggable adapter point and remains
+Normative/Planned.

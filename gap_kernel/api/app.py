@@ -12,13 +12,14 @@ Exposes the kernel's functionality via a REST API for:
 """
 
 import logging
-from datetime import datetime
 from typing import List, Optional
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from gap_kernel import __version__
+from gap_kernel._time import utcnow
 from gap_kernel.crypto.signing import PublicKeyRegistry
 from gap_kernel.client.governance_client import SubprocessGovernanceClient
 from gap_kernel.execution.fabric import ExecutionFabric
@@ -32,10 +33,13 @@ from gap_kernel.governance.profile import ApplicabilityProfile
 logger = logging.getLogger("gap_kernel.api")
 from gap_kernel.learning.engine import LearningEngine
 from gap_kernel.lineage.store import LineageStore
-from gap_kernel.models.governance import GovernanceDecision
-from gap_kernel.models.intent import IntentVector
-from gap_kernel.models.learning import OperationalHeuristic, PolicyProposal
-from gap_kernel.models.lineage import LineageRecord
+from gap_kernel.models.intent import (
+    Constraint,
+    ConstraintType,
+    IntentVector,
+    PolicyActivation,
+    PolicyTier,
+)
 from gap_kernel.models.reconciler import ReconcilerConfig
 from gap_kernel.models.strategy import StrategyProposal
 from gap_kernel.models.world import EntityState
@@ -84,6 +88,48 @@ class ProposalReviewRequest(BaseModel):
     reviewer: str
 
 
+# --- Constraint Deserialization ---
+
+def _build_constraints(declared: list, hard: bool) -> List[Constraint]:
+    """Build Constraints from the request payload.
+
+    ``threshold`` and ``tier`` are carried through: they were previously dropped,
+    so an ``aml_screening_required`` or ``minimum_necessary_phi`` constraint
+    declared over HTTP silently lost its numeric floor and the evaluator fell back
+    to its own default — a stricter rule than the caller wrote, or a laxer one.
+
+    Tier 1 is refused. The regulatory floor is declared in a SIGNED Applicability
+    Profile; a constraint that claimed that tier over an HTTP request would be
+    wearing the authority of a signature nobody produced.
+    """
+    constraints: List[Constraint] = []
+    for c in declared:
+        if "name" not in c:
+            raise HTTPException(400, "Every constraint must declare a name.")
+        try:
+            tier = PolicyTier(c.get("tier", PolicyTier.OPERATIONAL))
+        except ValueError:
+            raise HTTPException(
+                400, f"Constraint '{c['name']}' declares an unknown policy tier."
+            ) from None
+        if tier == PolicyTier.REGULATORY_FLOOR:
+            raise HTTPException(
+                400,
+                f"Constraint '{c.get('name')}' declares the Tier-1 regulatory "
+                f"floor. The floor is carried by a signed Applicability Profile "
+                f"and cannot be declared over HTTP.",
+            )
+        constraints.append(Constraint(
+            name=c["name"],
+            type=ConstraintType.HARD if hard else ConstraintType.SOFT,
+            description=c.get("description", ""),
+            activation=PolicyActivation(**(c.get("activation", {}))),
+            threshold=c.get("threshold"),
+            tier=tier,
+        ))
+    return constraints
+
+
 # --- Application Factory ---
 
 def create_app(
@@ -96,6 +142,7 @@ def create_app(
     profile_key_registry: Optional[PublicKeyRegistry] = None,
     reconciler_action_type_id: str = "drift_reconciliation",
     isolated: bool = True,
+    enable_mutating_routes: bool = False,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -110,12 +157,32 @@ def create_app(
     behind ``SubprocessGovernanceClient`` — the app holds only the public key and
     a request channel, so the signing key cannot be reached by reflection. Pass
     ``isolated=False`` to run the governed kernel in-process (embedding / tests).
+
+    **This app carries no authentication, and it deliberately never will.** GAP
+    is a governance kernel, not an identity provider; an API-key/role/session
+    framework grown inside it would become the thing deployments trust for
+    authorization while being nobody's product. So the surface is split, and the
+    split IS the security contract:
+
+    * By default only the READ/EVALUATE surface is registered — every ``GET``,
+      plus ``POST /governance/evaluate``. Nothing on it changes intents, world
+      state, reconciler configuration, escalations, or learning proposals.
+    * ``enable_mutating_routes=True`` additionally registers the mutating routes.
+      A deployment that opts in is asserting that this app is reachable **only**
+      behind its own authenticated proxy, which is where callers are identified
+      and human-only operations are gated. Exposing them on an open port hands
+      any unauthenticated caller the ability to strip a HARD constraint from an
+      intent or to write the facts the regulatory evaluators rule on.
+
+    There is no route to the Action Type Registry in either posture: registered
+    action types are carried in the signed Applicability Profile, so an HTTP write
+    would be an unsigned change to the governance configuration.
     """
 
     app = FastAPI(
         title="GAP Kernel API",
         description="General Autonomy Protocol — Kernel Prototype",
-        version="0.1.0-alpha",
+        version=__version__,
     )
 
     # Initialize components
@@ -204,47 +271,6 @@ def create_app(
 
     # === INTENT MANAGEMENT ===
 
-    @app.post("/intents", response_model=dict)
-    def create_intent(req: IntentCreateRequest):
-        """Declare a new intent."""
-        from gap_kernel.models.intent import Constraint, ConstraintType, PolicyActivation
-
-        intent_id = f"intent_{uuid4().hex[:12]}"
-
-        hard = []
-        for c in req.hard_constraints:
-            activation = PolicyActivation(**(c.get("activation", {})))
-            hard.append(Constraint(
-                name=c["name"],
-                type=ConstraintType.HARD,
-                description=c.get("description", ""),
-                activation=activation,
-            ))
-
-        soft = []
-        for c in req.soft_constraints:
-            activation = PolicyActivation(**(c.get("activation", {})))
-            soft.append(Constraint(
-                name=c["name"],
-                type=ConstraintType.SOFT,
-                description=c.get("description", ""),
-                activation=activation,
-            ))
-
-        intent = IntentVector(
-            id=intent_id,
-            objective=req.objective,
-            priority=req.priority,
-            hard_constraints=hard,
-            soft_constraints=soft,
-            cost_ceiling=req.cost_ceiling,
-            created_by=req.created_by,
-            created_at=datetime.utcnow(),
-        )
-
-        reconciler.register_intent(intent)
-        return {"id": intent_id, "intent": intent.model_dump(mode="json")}
-
     @app.get("/intents")
     def list_intents():
         """List all active intents."""
@@ -258,56 +284,53 @@ def create_app(
             raise HTTPException(404, "Intent not found")
         return intents[intent_id].model_dump(mode="json")
 
-    @app.put("/intents/{intent_id}")
-    def update_intent(intent_id: str, req: IntentCreateRequest):
-        """Update an intent (human only)."""
-        from gap_kernel.models.intent import Constraint, ConstraintType, PolicyActivation
+    if enable_mutating_routes:
 
-        intents = {i.id: i for i in reconciler.get_intents()}
-        if intent_id not in intents:
-            raise HTTPException(404, "Intent not found")
+        @app.post("/intents", response_model=dict)
+        def create_intent(req: IntentCreateRequest):
+            """Declare a new intent."""
+            intent = IntentVector(
+                id=f"intent_{uuid4().hex[:12]}",
+                objective=req.objective,
+                priority=req.priority,
+                hard_constraints=_build_constraints(req.hard_constraints, hard=True),
+                soft_constraints=_build_constraints(req.soft_constraints, hard=False),
+                cost_ceiling=req.cost_ceiling,
+                created_by=req.created_by,
+                created_at=utcnow(),
+            )
 
-        old = intents[intent_id]
+            reconciler.register_intent(intent)
+            return {"id": intent.id, "intent": intent.model_dump(mode="json")}
 
-        hard = []
-        for c in req.hard_constraints:
-            activation = PolicyActivation(**(c.get("activation", {})))
-            hard.append(Constraint(
-                name=c["name"],
-                type=ConstraintType.HARD,
-                description=c.get("description", ""),
-                activation=activation,
-            ))
+        @app.put("/intents/{intent_id}")
+        def update_intent(intent_id: str, req: IntentCreateRequest):
+            """Replace an intent's declaration, including its HARD constraint set.
 
-        soft = []
-        for c in req.soft_constraints:
-            activation = PolicyActivation(**(c.get("activation", {})))
-            soft.append(Constraint(
-                name=c["name"],
-                type=ConstraintType.SOFT,
-                description=c.get("description", ""),
-                activation=activation,
-            ))
+            Authorizing this is the proxy's job — see ``create_app``."""
+            intents = {i.id: i for i in reconciler.get_intents()}
+            if intent_id not in intents:
+                raise HTTPException(404, "Intent not found")
 
-        updated = IntentVector(
-            id=intent_id,
-            objective=req.objective,
-            priority=req.priority,
-            hard_constraints=hard,
-            soft_constraints=soft,
-            cost_ceiling=req.cost_ceiling,
-            created_by=req.created_by,
-            created_at=old.created_at,
-        )
+            updated = IntentVector(
+                id=intent_id,
+                objective=req.objective,
+                priority=req.priority,
+                hard_constraints=_build_constraints(req.hard_constraints, hard=True),
+                soft_constraints=_build_constraints(req.soft_constraints, hard=False),
+                cost_ceiling=req.cost_ceiling,
+                created_by=req.created_by,
+                created_at=intents[intent_id].created_at,
+            )
 
-        reconciler.register_intent(updated)
-        return updated.model_dump(mode="json")
+            reconciler.register_intent(updated)
+            return updated.model_dump(mode="json")
 
-    @app.delete("/intents/{intent_id}")
-    def delete_intent(intent_id: str):
-        """Deactivate an intent."""
-        reconciler.unregister_intent(intent_id)
-        return {"status": "deactivated", "intent_id": intent_id}
+        @app.delete("/intents/{intent_id}")
+        def delete_intent(intent_id: str):
+            """Deactivate an intent."""
+            reconciler.unregister_intent(intent_id)
+            return {"status": "deactivated", "intent_id": intent_id}
 
     # === WORLD STATE ===
 
@@ -324,20 +347,38 @@ def create_app(
             raise HTTPException(404, "Entity not found")
         return entity.model_dump(mode="json")
 
-    @app.post("/world/ingest")
-    def ingest_entity(req: EntityIngestRequest):
-        """Manual state update (for testing)."""
-        entity = EntityState(
-            entity_type=req.entity_type,
-            entity_id=req.entity_id,
-            properties=req.properties,
-            last_updated=datetime.utcnow(),
-            source=req.source,
-            confidence=req.confidence,
-            obligations=req.obligations,
-        )
-        ws.upsert_entity(entity)
-        return {"status": "ingested", "entity_id": req.entity_id}
+    @app.get("/world/evidence-mutations")
+    def get_evidence_mutations(limit: int = 100):
+        """Recent changes to governance-relevant world-model properties — the
+        facts the regulatory evaluators rule on. A consent flip is visible here
+        whatever channel made it."""
+        return ws.governance_property_mutations(limit=limit)
+
+    if enable_mutating_routes:
+
+        @app.post("/world/ingest")
+        def ingest_entity(req: EntityIngestRequest):
+            """Ingest entity state over HTTP.
+
+            HTTP is NOT an attested evidence channel: this route names the source
+            the caller claims, and nothing here can authenticate it. Ordinary
+            properties are stored as supplied; governance-relevant ones are
+            recorded unattested, and a governed kernel will not certify a
+            constraint that depends on them. Attested evidence is written by a
+            channel that can vouch for itself, through
+            ``WorldModelStore.upsert_entity(entity, channel=...)``.
+            """
+            entity = EntityState(
+                entity_type=req.entity_type,
+                entity_id=req.entity_id,
+                properties=req.properties,
+                last_updated=utcnow(),
+                source=req.source,
+                confidence=req.confidence,
+                obligations=req.obligations,
+            )
+            ws.upsert_entity(entity)
+            return {"status": "ingested", "entity_id": req.entity_id}
 
     # === RECONCILER ===
 
@@ -353,25 +394,27 @@ def create_app(
             "open_escalations": len(reconciler.open_escalations),
         }
 
-    @app.post("/reconciler/trigger")
-    def trigger_reconciliation():
-        """Force a reconciliation cycle (for testing)."""
-        results = reconciler.reconcile_once()
-        return ReconcilerTriggerResponse(
-            results=results,
-            cycle_count=len(results),
-        )
-
     @app.get("/reconciler/config")
     def get_reconciler_config():
         """Current reconciler configuration."""
         return reconciler.config.model_dump()
 
-    @app.put("/reconciler/config")
-    def update_reconciler_config(config: ReconcilerConfig):
-        """Update reconciler configuration."""
-        reconciler.config = config
-        return config.model_dump()
+    if enable_mutating_routes:
+
+        @app.post("/reconciler/trigger")
+        def trigger_reconciliation():
+            """Force a reconciliation cycle — drives the autonomous path."""
+            results = reconciler.reconcile_once()
+            return ReconcilerTriggerResponse(
+                results=results,
+                cycle_count=len(results),
+            )
+
+        @app.put("/reconciler/config")
+        def update_reconciler_config(config: ReconcilerConfig):
+            """Update reconciler configuration."""
+            reconciler.config = config
+            return config.model_dump()
 
     # === GOVERNANCE ===
 
@@ -467,23 +510,29 @@ def create_app(
         """Pending policy proposals."""
         return [p.model_dump(mode="json") for p in le.get_all_proposals()]
 
-    @app.post("/learning/proposals/{proposal_id}/approve")
-    def approve_policy_proposal(proposal_id: str, req: ProposalReviewRequest):
-        """Human approves a policy change."""
-        result = le.approve_proposal(proposal_id, req.reviewer)
-        if not result:
-            raise HTTPException(404, "Proposal not found or not pending")
-        return result.model_dump(mode="json")
+    if enable_mutating_routes:
 
-    @app.post("/learning/proposals/{proposal_id}/reject")
-    def reject_policy_proposal(proposal_id: str, req: ProposalReviewRequest):
-        """Human rejects a policy change."""
-        result = le.reject_proposal(proposal_id, req.reviewer)
-        if not result:
-            raise HTTPException(404, "Proposal not found or not pending")
-        return result.model_dump(mode="json")
+        @app.post("/learning/proposals/{proposal_id}/approve")
+        def approve_policy_proposal(proposal_id: str, req: ProposalReviewRequest):
+            """Human approves a policy change."""
+            result = le.approve_proposal(proposal_id, req.reviewer)
+            if not result:
+                raise HTTPException(404, "Proposal not found or not pending")
+            return result.model_dump(mode="json")
 
-    # === ACTION TYPE REGISTRY ===
+        @app.post("/learning/proposals/{proposal_id}/reject")
+        def reject_policy_proposal(proposal_id: str, req: ProposalReviewRequest):
+            """Human rejects a policy change."""
+            result = le.reject_proposal(proposal_id, req.reviewer)
+            if not result:
+                raise HTTPException(404, "Proposal not found or not pending")
+            return result.model_dump(mode="json")
+
+    # === ACTION TYPE REGISTRY (read only) ===
+    # There is no registration route. Registered action types are carried in the
+    # signed Applicability Profile, so writing one over HTTP would be an unsigned
+    # change to the governance configuration — made by an unauthenticated caller
+    # who could then classify a forbidden action under a type they just filed.
 
     @app.get("/governance/action-types")
     def get_action_types():
@@ -501,18 +550,6 @@ def create_app(
             raise HTTPException(404, "Action type not found")
         return spec.model_dump(mode="json")
 
-    @app.post("/governance/action-types")
-    def register_action_type(req: dict):
-        """
-        Register a new action type (human authorization required).
-        Autonomous systems cannot register new action types.
-        """
-        from gap_kernel.models.governance import ActionTypeSpec
-        spec = ActionTypeSpec.model_validate(req)
-        registered_by = req.get("registered_by", "api_user")
-        result = gk.register_action_type(spec, registered_by)
-        return result.model_dump(mode="json")
-
     # === ESCALATIONS ===
 
     @app.get("/escalations/pending")
@@ -528,17 +565,19 @@ def create_app(
         pending-only listing and previously unresolvable)."""
         return reconciler.open_escalations
 
-    @app.post("/escalations/{escalation_id}/resolve")
-    def resolve_escalation(escalation_id: str, req: EscalationResolveRequest):
-        """Human provides guidance (with the option chosen, when framed options
-        were presented — feeds GIM-4 escalation-framing-bias detection)."""
-        result = reconciler.resolve_escalation(
-            escalation_id, req.resolution, req.resolver,
-            chosen_option_id=req.chosen_option_id,
-        )
-        if not result:
-            raise HTTPException(404, "Escalation not found or already resolved")
-        return result
+    if enable_mutating_routes:
+
+        @app.post("/escalations/{escalation_id}/resolve")
+        def resolve_escalation(escalation_id: str, req: EscalationResolveRequest):
+            """Human provides guidance (with the option chosen, when framed options
+            were presented — feeds GIM-4 escalation-framing-bias detection)."""
+            result = reconciler.resolve_escalation(
+                escalation_id, req.resolution, req.resolver,
+                chosen_option_id=req.chosen_option_id,
+            )
+            if not result:
+                raise HTTPException(404, "Escalation not found or already resolved")
+            return result
 
     @app.get("/reconciler/framing-bias")
     def get_framing_bias():
@@ -550,5 +589,30 @@ def create_app(
     return app
 
 
-# Default application instance
-app = create_app()
+# The module-level ``app`` is what ``uvicorn gap_kernel.api.app:app`` serves, and
+# it is UNGOVERNED — ``create_app()`` with no Applicability Profile. Building it
+# at import time meant every importer of this module (the test suite, anything
+# reaching for ``create_app``) silently constructed an ungoverned kernel, and the
+# convenient default entry point was the unsafe one.
+#
+# PEP 562: it is now built only when the attribute is actually read, so uvicorn's
+# ``module:app`` lookup still works while an import does not. It cannot raise
+# here — a hard failure at attribute access would break the documented entry
+# point — so it announces exactly what is not enforced. A deployment that needs
+# the guarantees calls ``create_app(applicability_profile=..., ...)`` itself.
+def __getattr__(name: str):
+    if name == "app":
+        logger.warning(
+            "Materializing the module-level UNGOVERNED GAP application. NOT "
+            "ENFORCED: no signed Applicability Profile (regulatory floor), no "
+            "Tier-1 constraints, no strict action typing, no Governance "
+            "Integrity Monitor or self-evolution monitor on the autonomous "
+            "heartbeat, no attested-evidence requirement on the world model, and "
+            "the governance kernel runs IN PROCESS with its signing key. Build "
+            "the app with create_app(applicability_profile=..., "
+            "profile_key_registry=...) for a governed deployment."
+        )
+        instance = create_app()
+        globals()["app"] = instance
+        return instance
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

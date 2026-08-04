@@ -39,10 +39,11 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import Dict, FrozenSet, Iterable, List, Optional
+from typing import Dict, FrozenSet, Iterable, List, Optional, Set
 
 from pydantic import BaseModel, ConfigDict
 
+from gap_kernel._time import utcnow
 from gap_kernel.governance.corrigibility import KillSwitch
 from gap_kernel.governance.integrity_monitor import IntegritySignal
 from gap_kernel.models.governance import AuthorizationLevel
@@ -222,7 +223,7 @@ class SubAgentRegistry:
                 agent_id=agent_id,
                 target=target,
                 rank=_RANK[authorization_level],
-                at=timestamp or datetime.utcnow(),
+                at=timestamp or utcnow(),
             )
         )
 

@@ -2,6 +2,13 @@
 ## Extension to GAP Specification
 ## March 10, 2026
 
+> ⚠️ **Normative requirements below; implementation status at the end.** The
+> thresholds in this document are the *requirement*. Where the reference
+> implementation's defaults differ — GIM-1 and GIM-3 both differ, one of them
+> semantically — the divergence is stated in
+> [Implementation status](#implementation-status) rather than quietly resolved by
+> editing either side.
+
 ---
 
 ## CONTEXT
@@ -201,3 +208,63 @@ layers.
 This specification does not define implementation details. It defines what any
 GAP-compliant implementation MUST monitor, what thresholds trigger alerts, and
 what responses are required.
+
+---
+
+## IMPLEMENTATION STATUS
+
+What the GAP reference implementation actually runs, per requirement. Two
+modules are involved: `gap_kernel/governance/integrity_monitor.py`
+(`GovernanceIntegrityMonitor`, all five signal classes) and
+`gap_kernel/governance/independent_review.py`
+(`IndependentAuthorizationMonitor`, the self-versus-independent comparison axis).
+
+**How the two GIM-1 divergences were resolved.** The normative thresholds above
+were left unchanged and the implementation defaults were left unchanged; what
+changed is that the mismatch is now stated. That is the right call for GIM-1,
+where the two numbers are *not comparable* — the spec's `0.15` is a normalized
+divergence score against an independent evaluator, while the monitor's `1.0` is a
+count of authorization levels of self-versus-past drift. Silently rewriting
+either number would have created a false agreement between different
+measurements. It is a weaker call for GIM-3, where the implementation's window is
+genuinely 8,640× shorter than the specified one and the detector measures a
+different thing entirely; **the honest reading is that GIM-3 is not implemented as
+specified**, and reconciling it requires code, not prose.
+
+| Req | Spec alert condition | Implementation default | Verdict |
+|---|---|---|---|
+| **GIM-1** | Drift score > **0.15** over two consecutive periods, OR a single operation the system rates L0 that an independent evaluator rates L3/L4 | Split across two modules. `IndependentAuthorizationMonitor(drift_threshold=0.15, severe_gap=3, min_samples=5)` — normalized over the L0–L4 range, so **0.15 matches the spec**, and `severe_gap=3` is exactly the L0-vs-L3/L4 clause. Separately, `GovernanceIntegrityMonitor(drift_threshold=1.0, baseline_window=5, recent_window=3)` compares an action type's recent mean authorization rank against its own baseline, in **whole authorization levels** | **Partially met.** The spec's condition is implemented, in `independent_review.py`. The `1.0` in `integrity_monitor.py` is a second, coarser self-versus-past detector in different units, not a mis-set version of the spec's 0.15. **Neither implements the "two consecutive evaluation periods" debounce** — both fire on a single evaluation |
+| **GIM-2** | Divergence > **0.2** on any metric between known-audit and shadow-audit | `audit_divergence_threshold=0.2`, `audit_min_samples=5` | **Threshold matches.** Metrics implemented are the authorization-classification distribution (total-variation distance), mean rank, and escalation rate. The spec's *reasoning-trace completeness* and *adversarial challenge rate* metrics are not implemented. **Unfed on any shipped path** — the deployment must supply audit-mode telemetry |
+| **GIM-3** | Any single composition with authorization gap **≥ 2 levels**; or **3+** compositions with gap = 1 in the same domain within **30 days** | `decomposition_count_threshold=3`, `decomposition_window_seconds=300` (**5 minutes**), `decomposition_max_level="L1"` | **Not met as specified.** The count of 3 matches. The window does not: 5 minutes vs 30 days. More importantly the *mechanism* differs — the implementation counts repeated sub-threshold actions (≤ L1) against one target inside a recency band; it never computes the composite task's authorization level, so it measures no "gap" at all. It detects bursts, not threshold avoidance |
+| **GIM-4** | System-preferred approval rate > **90%** AND framing-approval correlation > **0.5**; or > **80%** first-position approval | `preferred_approval_threshold=0.90`, `framing_correlation_threshold=0.5`, `position_bias_threshold=0.80`, `escalation_min_samples=5` | **Thresholds match.** Correlation is computed as a phi coefficient over binary series. Fed on the shipped path from real human escalation resolutions, but the framing sentiment scores themselves are **deployment-declared** — the system self-reports how favorably it framed its own option. The spec's **required countermeasure** (auto-randomize option order, normalize sentiment) is **not implemented** |
+| **GIM-5** | Endorsement rate > **85%** for two consecutive periods AND material-change rate < **10%** | `endorsement_threshold=0.85`, `material_change_floor=0.10`, `challenge_window=10`, `collapse_endorsement_rate=0.98` | **Thresholds match**, and this is the one detector that implements the spec's **two-consecutive-period debounce**. **Unfed** — nothing on any shipped path calls `observe_challenge`, so in practice GIM-5 never fires |
+
+### Architectural requirements
+
+The isolation and independence requirements above are **not met**, and this is
+the most load-bearing gap in this document.
+
+- *"MUST use a different model/evaluator"* — the monitor is rule-based and
+  therefore free of the same-model correlated-blind-spot failure the requirement
+  targets. That is real, and it is **logic** independence, not model
+  independence. `RuleBasedIndependentClassifier` rates operations by substring-
+  matching a fixed keyword list against the action name and parameter values;
+  **renaming an action defeats it**. A model-backed classifier is a declared
+  adapter point and is unimplemented.
+- *"MUST NOT be controllable or influenceable by the system being monitored"* —
+  the monitor is an ordinary in-process Python object owned by the CGA loop it
+  watches. It has no separate process, no separate key, and no reporting channel
+  the governed process cannot reach.
+- *"MUST report to human administrators, not to the system"* — signals are
+  returned on the `CGAResult` the governed process consumes. In governed mode a
+  flagged action is held and routed to the human escalation queue, which is
+  consequential and real; the *reporting channel* is still the governed system's.
+- *"MUST operate continuously"* — GIM-1 and GIM-3 are wired into the CGA loop, so
+  every decision is observed. GIM-2, GIM-4 and GIM-5 depend on telemetry a
+  deployment must supply, and GIM-5 has no producer anywhere in the repository.
+
+**Therefore: "five independent detectors" is not an accurate description of what
+runs.** Five detectors exist and are tested. Two (GIM-1, GIM-3) observe every
+decision; one (GIM-4) is fed self-reported framing data; two (GIM-2, GIM-5) are
+unfed. None of them is independent in the architectural sense this document
+requires.

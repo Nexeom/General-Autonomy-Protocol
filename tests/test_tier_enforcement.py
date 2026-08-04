@@ -12,6 +12,7 @@ from datetime import datetime
 
 import pytest
 
+from gap_kernel._time import utcnow
 from gap_kernel.crypto.signing import PublicKeyRegistry, generate_keypair
 from gap_kernel.governance.kernel import (
     GovernanceKernel,
@@ -47,7 +48,7 @@ def _proposal(cost: float, proposal_id="prop_tier"):
         ],
         estimated_cost=cost,
         rationale="test",
-        generated_at=datetime.utcnow(),
+        generated_at=utcnow(),
     )
 
 
@@ -59,12 +60,12 @@ def _intent():
         hard_constraints=[],
         soft_constraints=[],
         created_by="test",
-        created_at=datetime.utcnow(),
+        created_at=utcnow(),
     )
 
 
 def _world():
-    return WorldModel(entities={}, last_reconciled=datetime.utcnow())
+    return WorldModel(entities={}, last_reconciled=utcnow())
 
 
 def _floor_profile() -> ApplicabilityProfile:

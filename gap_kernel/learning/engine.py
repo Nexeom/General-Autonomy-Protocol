@@ -13,11 +13,11 @@ Normative Learning (Human-Approved Only):
 - Never auto-applies policy changes
 """
 
-from datetime import datetime
 from typing import Dict, List, Optional
 from uuid import uuid4
 
-from gap_kernel.models.governance import GovernanceDecision, GovernanceVerdict
+from gap_kernel._time import utcnow
+from gap_kernel.models.governance import GovernanceVerdict
 from gap_kernel.models.learning import OperationalHeuristic, PolicyProposal
 from gap_kernel.models.lineage import LineageRecord
 
@@ -71,7 +71,7 @@ class LearningEngine:
                             source_lineage_ids=[record.id],
                             hit_count=1,
                             success_rate=1.0 if record.execution_success else 0.0,
-                            learned_at=datetime.utcnow(),
+                            learned_at=utcnow(),
                         )
                         self._heuristics[heuristic.id] = heuristic
                         return heuristic
@@ -186,7 +186,7 @@ class LearningEngine:
         if proposal and proposal.status == "pending_review":
             proposal.status = "approved"
             proposal.reviewed_by = reviewer
-            proposal.reviewed_at = datetime.utcnow()
+            proposal.reviewed_at = utcnow()
             return proposal
         return None
 
@@ -196,7 +196,7 @@ class LearningEngine:
         if proposal and proposal.status == "pending_review":
             proposal.status = "rejected"
             proposal.reviewed_by = reviewer
-            proposal.reviewed_at = datetime.utcnow()
+            proposal.reviewed_at = utcnow()
             return proposal
         return None
 
