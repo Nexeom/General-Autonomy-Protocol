@@ -56,14 +56,15 @@ documented subset. GAP is not an established industry standard or a certificatio
 
 ## Getting started
 
-Use a Python 3.11+ virtual environment. The commands below select the versioned
-alpha after cloning; if you already have its checkout, start at the install
-command. Record the commit with the review results.
+Use a Python 3.11+ virtual environment. The commands below select the prepared
+alpha branch after cloning; if you already have its checkout, start at the
+install command. The proposed `v0.3.0a1` tag is not published yet. Record the
+commit with the review results; use a versioned tag once it appears in Releases.
 
 ```bash
 git clone https://github.com/Nexeom/General-Autonomy-Protocol.git
 cd General-Autonomy-Protocol
-git checkout v0.3.0a1
+git checkout codex/governed-alpha
 python -m pip install -e ".[dev]"
 python examples/governed_demo.py
 python examples/evaluate.py --output evaluation-results/local.json
