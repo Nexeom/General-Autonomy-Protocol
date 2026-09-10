@@ -554,7 +554,7 @@ def test_an_authorization_is_spendable_exactly_once(level, action_types, nonce):
     if level in (AuthorizationLevel.L2, AuthorizationLevel.L3, AuthorizationLevel.L4):
         decision.human_approver_public_key_id = APPROVER
         decision.human_approval_timestamp = utcnow()
-        decision.human_approval_valid_until = utcnow() + timedelta(minutes=5)
+        decision.human_approval_valid_until = decision.expires_at
         decision.human_approval_signature = sign(
             approver_priv, ExecutionFabric._oob_signed_message(decision)
         )

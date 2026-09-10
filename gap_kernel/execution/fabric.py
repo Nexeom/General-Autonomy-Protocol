@@ -133,12 +133,16 @@ class ExecutionFabric:
         kill_switch: Optional[KillSwitch] = None,
         execution_ledger: Optional[ExecutionLedger] = None,
         kernel_key_registry: Optional[PublicKeyRegistry] = None,
+        before_dispatch: Optional[Callable[[PlannedAction], None]] = None,
     ):
         self.world_model = world_model
         self._executors: Dict[str, Callable] = {}
         # Corrigibility: when this human-controlled kill-switch is engaged, no
         # action is dispatched (checked first, fail closed).
         self._kill_switch = kill_switch
+        # Trusted deployment hook, never proposal-supplied. A raised exception
+        # stops the batch before this action and preserves prior completions.
+        self._before_dispatch = before_dispatch
         # Persistent replay protection + approver-key trust boundary for OOB.
         # Defaults are process-local; production injects shared, durable stores.
         self._oob_ledger = oob_ledger if oob_ledger is not None else OOBLedger()
@@ -188,9 +192,10 @@ class ExecutionFabric:
         GUARD: L2+ requires Out-of-Band Authority Verification, reserved BEFORE
                dispatch so the same human approval cannot be spent twice.
 
-        A dispatch failure leaves the execution resumable: re-presenting the same
-        decision resumes it and skips the actions that already succeeded, so a
-        retry never repeats a side effect under one authorization.
+        A dispatch failure leaves the execution resumable while its authority
+        remains valid: a retry skips actions recorded as completed. Tools need
+        their own idempotency for effects whose response or completion record
+        was lost. Authority is rechecked before every new action.
         """
         # Corrigibility halt (checked first): a halt overrides everything.
         if self._kill_switch is not None:
@@ -271,18 +276,48 @@ class ExecutionFabric:
         already_done = row.completed_actions if row is not None else frozenset()
 
         try:
+            prior_results = self._execution_ledger.action_results(row.nonce) if row is not None else {}
             for index, action in enumerate(proposal.actions):
                 key = _action_idempotency_key(index, action)
                 if key in already_done:
                     # The side effect happened under this same authorization on an
                     # earlier attempt. Report it as completed, but do NOT re-dispatch
                     # it and do NOT re-apply its world-state change.
-                    completed.append(self._already_completed(action))
+                    receipt = prior_results.get(key)
+                    completed.append({**receipt, "skipped": True} if receipt is not None
+                                     else self._already_completed(action))
                     continue
+                try:
+                    # A valid batch start does not authorize a later action
+                    # after consent, human authority, or the decision expires.
+                    # The service hook checks its current policy/evidence; the
+                    # final clock checks also cover time spent in that hook.
+                    if self._before_dispatch is not None:
+                        self._before_dispatch(action)
+                    self._verify_single_use_fields(governance_decision)
+                    self._verify_oob_authority(governance_decision)
+                    if self._kill_switch is not None and (
+                        self._kill_switch.is_engaged()
+                        or self._kill_switch.is_engaged(action.target)
+                    ):
+                        raise KillSwitchEngaged(
+                            f"Execution halted for proposal {proposal.id}: the "
+                            "kill-switch is engaged. No further action will be dispatched."
+                        )
+                except BaseException as exc:
+                    failed.append({
+                        "action_type": action.action_type,
+                        "target": action.target,
+                        "success": False,
+                        "error": str(exc) or type(exc).__name__,
+                        "failure_stage": "before_dispatch",
+                        "duration": 0.0,
+                    })
+                    raise
                 result = self._dispatch_action(action)
                 if result["success"]:
                     if row is not None:
-                        self._execution_ledger.record_action(row.nonce, key)
+                        self._execution_ledger.record_action(row.nonce, key, result=result)
                     completed.append(result)
                     # Update world model with outcome
                     changes = self._apply_state_changes(action, result)
@@ -291,18 +326,23 @@ class ExecutionFabric:
                     failed.append(result)
         except BaseException:
             if row is not None:
-                self._execution_ledger.finish(row.nonce, success=False)
+                interrupted = ExecutionResult(
+                    proposal_id=proposal.id, actions_completed=completed,
+                    actions_failed=failed, success=False,
+                    world_state_changes=state_changes, executed_at=utcnow(),
+                    execution_duration_seconds=round(time.monotonic() - start_time, 3),
+                )
+                self._execution_ledger.finish(
+                    row.nonce, success=False,
+                    result=interrupted.model_dump(mode="json"),
+                    decision=governance_decision.model_dump(mode="json"),
+                )
             raise
 
         elapsed = time.monotonic() - start_time
         success = len(failed) == 0
 
-        # Settle. On success the nonce is spent for good; on failure the row stays
-        # resumable, so a transient failure does not destroy a valid authorization.
-        if row is not None:
-            self._execution_ledger.finish(row.nonce, success=success)
-
-        return ExecutionResult(
+        outcome = ExecutionResult(
             proposal_id=proposal.id,
             actions_completed=completed,
             actions_failed=failed,
@@ -311,6 +351,14 @@ class ExecutionFabric:
             executed_at=utcnow(),
             execution_duration_seconds=round(elapsed, 3),
         )
+        # Store the outcome atomically with settlement, so an audit/response
+        # failure after this point cannot erase the durable execution result.
+        if row is not None:
+            self._execution_ledger.finish(
+                row.nonce, success=success, result=outcome.model_dump(mode="json"),
+                decision=governance_decision.model_dump(mode="json"),
+            )
+        return outcome
 
     @staticmethod
     def _already_completed(action: PlannedAction) -> dict:
@@ -340,6 +388,7 @@ class ExecutionFabric:
                 decision.nonce,
                 decision_id=decision.id,
                 proposal_id=proposal.id,
+                decision=decision.model_dump(mode="json"),
             )
         except ExecutionReplayError as exc:
             raise ReplayExecutionError(str(exc)) from exc
@@ -366,7 +415,7 @@ class ExecutionFabric:
                 f"expires_at); replay protection cannot be evaluated, so it is "
                 f"refused."
             )
-        if utcnow() > ensure_utc(decision.expires_at):
+        if utcnow() >= ensure_utc(decision.expires_at):
             raise ExecutionError(
                 f"Decision {decision.id} expired at "
                 f"{ensure_utc(decision.expires_at).isoformat()}; refusing to execute "
@@ -389,6 +438,7 @@ class ExecutionFabric:
                 decision.id,
                 decision.human_approval_signature,
                 decision.human_approver_public_key_id or "",
+                execution_nonce=decision.nonce,
             )
         except ReplayError as exc:
             raise OOBVerificationError(
@@ -462,12 +512,12 @@ class ExecutionFabric:
 
         A delimiter-safe JSON object binding the approval to this specific
         decision, the proposal it authorizes, the authorization level, the
-        approver key id, and the expiry — so a captured signature is not
+        approver key id, approval timestamp, and expiry — so a captured signature is not
         transferable to a different decision, proposal, level, or approver.
         """
         return json.dumps(
             {
-                "_domain": "gap.oob_approval.v1",
+                "_domain": "gap.oob_approval.v2",
                 "decision_id": decision.id,
                 "proposal_id": decision.proposal_id,
                 "authorization_level": (
@@ -476,6 +526,11 @@ class ExecutionFabric:
                     else None
                 ),
                 "approver_key_id": decision.human_approver_public_key_id,
+                "approved_at": (
+                    decision.human_approval_timestamp.isoformat()
+                    if decision.human_approval_timestamp
+                    else None
+                ),
                 "valid_until": (
                     decision.human_approval_valid_until.isoformat()
                     if decision.human_approval_valid_until
@@ -492,12 +547,12 @@ class ExecutionFabric:
         For L2 and above, the human approver must have signed this specific
         Decision Record ID over an agent-independent channel. This verifies, in
         order (fail closed at every step):
-        1. a signature and approver key id are present;
-        2. the approval has not expired (freshness);
+        1. a signature, approver key id and signed approval times are present;
+        2. the approval has not expired and its timing is within the decision;
         3. the approver's public key is registered (known authority), and the
            approver is permitted to authorize at this level (per-key ceiling);
         4. the signature cryptographically verifies over the canonical message
-           (decision id, proposal, level, approver, expiry).
+            (decision id, proposal, level, approver, approval time, expiry).
 
         Non-replayability is NOT tested here: it is enforced by the atomic
         reservation in :meth:`_reserve_oob_authority`, taken before dispatch. A
@@ -519,12 +574,39 @@ class ExecutionFabric:
                 f"Decision {decision.id} OOB approval is missing an expiry "
                 f"(human_approval_valid_until)."
             )
+        if not decision.human_approval_timestamp:
+            raise OOBVerificationError(
+                f"Decision {decision.id} OOB approval is missing its signed "
+                "human_approval_timestamp."
+            )
+
+        approved_at = decision.human_approval_timestamp
+        valid_until = decision.human_approval_valid_until
+        if any(value.tzinfo is None or value.utcoffset() is None
+               for value in (approved_at, valid_until)):
+            raise OOBVerificationError(
+                f"Decision {decision.id} OOB approval timestamps require a timezone."
+            )
 
         # 2. Freshness — the approval must not be expired.
-        if utcnow() > decision.human_approval_valid_until:
+        now = utcnow()
+        if now >= valid_until:
             raise OOBVerificationError(
                 f"Decision {decision.id} OOB approval expired at "
                 f"{decision.human_approval_valid_until.isoformat()}."
+            )
+        if approved_at > now:
+            raise OOBVerificationError(
+                f"Decision {decision.id} OOB approval timestamp is in the future."
+            )
+        if approved_at < ensure_utc(decision.evaluated_at) or approved_at >= valid_until:
+            raise OOBVerificationError(
+                f"Decision {decision.id} OOB approval timestamp is outside its "
+                "decision and approval validity interval."
+            )
+        if decision.expires_at is not None and valid_until > ensure_utc(decision.expires_at):
+            raise OOBVerificationError(
+                f"Decision {decision.id} OOB approval expiry exceeds the decision expiry."
             )
 
         # 3. Resolve the approver's public key. An unknown key id fails closed.
@@ -556,7 +638,7 @@ class ExecutionFabric:
                 )
 
         # 4. Cryptographically verify the signature over the canonical message
-        #    (binds decision id, proposal, level, approver, and expiry).
+        #    (binds decision id, proposal, level, approver, timestamp, and expiry).
         if not verify_signature(
             public_key_hex,
             self._oob_signed_message(decision),

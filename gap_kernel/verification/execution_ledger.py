@@ -48,6 +48,7 @@ kernel's decision TTL, or a decision could outlive its own ledger row.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from dataclasses import dataclass
@@ -146,11 +147,23 @@ class ExecutionLedger:
             )
             """
         )
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(execution_actions)")}
+        if "result_json" not in columns:
+            self._conn.execute("ALTER TABLE execution_actions ADD COLUMN result_json TEXT")
+        self._conn.execute("""CREATE TABLE IF NOT EXISTS execution_contexts (
+            nonce TEXT PRIMARY KEY, context_json TEXT NOT NULL)""")
+        self._conn.execute("""CREATE TABLE IF NOT EXISTS execution_outcomes (
+            nonce TEXT NOT NULL, attempt INTEGER NOT NULL,
+            result_json TEXT NOT NULL, decision_json TEXT NOT NULL,
+            PRIMARY KEY (nonce, attempt))""")
+        self._conn.execute("""CREATE TABLE IF NOT EXISTS execution_attempts (
+            nonce TEXT NOT NULL, attempt INTEGER NOT NULL, decision_json TEXT NOT NULL,
+            PRIMARY KEY (nonce, attempt))""")
 
     # --- state machine ------------------------------------------------------
 
     def begin(
-        self, nonce: str, *, decision_id: str, proposal_id: str
+        self, nonce: str, *, decision_id: str, proposal_id: str, decision: Optional[dict] = None
     ) -> ExecutionRow:
         """Claim (or resume) the execution of ``nonce``.
 
@@ -227,6 +240,10 @@ class ExecutionLedger:
                         resumed=True,
                         completed_actions=self._completed_actions(nonce),
                     )
+                if decision is not None:
+                    self._conn.execute("INSERT INTO execution_attempts VALUES (?, ?, ?)",
+                                       (nonce, result.attempts,
+                                        json.dumps(decision, sort_keys=True, allow_nan=False)))
             except BaseException:
                 self._conn.execute("ROLLBACK")
                 raise
@@ -248,7 +265,8 @@ class ExecutionLedger:
             return False
         return (utcnow() - started).total_seconds() > self.lease_seconds
 
-    def finish(self, nonce: str, success: bool) -> None:
+    def finish(self, nonce: str, success: bool, *, result: Optional[dict] = None,
+               decision: Optional[dict] = None) -> None:
         """Settle an execution.
 
         On success the row becomes COMPLETE and no further ``begin`` succeeds.
@@ -277,6 +295,17 @@ class ExecutionLedger:
                     raise ExecutionReplayError(
                         f"Cannot settle nonce '{nonce}': no execution was begun for it."
                     )
+                if result is not None:
+                    if decision is None:
+                        raise ValueError("an execution outcome requires its authorized decision")
+                    attempt = self._conn.execute(
+                        "SELECT attempts FROM executions WHERE nonce=?", (nonce,)
+                    ).fetchone()["attempts"]
+                    self._conn.execute(
+                        "INSERT INTO execution_outcomes VALUES (?, ?, ?, ?)",
+                        (nonce, attempt, json.dumps(result, sort_keys=True, allow_nan=False),
+                         json.dumps(decision, sort_keys=True, allow_nan=False)),
+                    )
             except BaseException:
                 self._conn.execute("ROLLBACK")
                 raise
@@ -284,14 +313,81 @@ class ExecutionLedger:
 
     # --- per-action idempotency --------------------------------------------
 
-    def record_action(self, nonce: str, action_key: str) -> None:
+    def record_action(self, nonce: str, action_key: str, *, result: Optional[dict] = None) -> None:
         """Mark one action of this execution as completed (idempotent)."""
         with self._lock:
             self._conn.execute(
                 "INSERT OR IGNORE INTO execution_actions "
-                "(nonce, action_key, completed_at) VALUES (?, ?, ?)",
-                (nonce, action_key, utcnow().isoformat()),
+                "(nonce, action_key, completed_at, result_json) VALUES (?, ?, ?, ?)",
+                (nonce, action_key, utcnow().isoformat(),
+                 json.dumps(result, sort_keys=True, allow_nan=False) if result is not None else None),
             )
+
+    def action_results(self, nonce: str) -> dict:
+        """Durable tool receipts; legacy completion markers have no receipt."""
+        with self._lock:
+            return {row["action_key"]: json.loads(row["result_json"]) if row["result_json"] else None
+                    for row in self._conn.execute(
+                        "SELECT action_key, result_json FROM execution_actions WHERE nonce=?", (nonce,))}
+
+    def set_context(self, nonce: str, context: dict) -> None:
+        """Pin the original gateway context before dispatch, for audit recovery."""
+        encoded = json.dumps(context, sort_keys=True, allow_nan=False)
+        with self._lock:
+            self._conn.execute("INSERT OR IGNORE INTO execution_contexts VALUES (?, ?)",
+                               (nonce, encoded))
+            existing = self._conn.execute(
+                "SELECT context_json FROM execution_contexts WHERE nonce=?", (nonce,)).fetchone()
+            if existing[0] != encoded:
+                raise ExecutionReplayError("execution context cannot change under an authorization")
+
+    def outcomes(self, nonce: str) -> list[dict]:
+        """Every settled attempt, including context for idempotent audit delivery."""
+        with self._lock:
+            return [{"attempt": row["attempt"], "result": json.loads(row["result_json"]),
+                     "decision": json.loads(row["decision_json"]),
+                     "context": json.loads(row["context_json"]) if row["context_json"] else None}
+                    for row in self._conn.execute(
+                        "SELECT o.*, c.context_json FROM execution_outcomes o "
+                        "LEFT JOIN execution_contexts c ON c.nonce=o.nonce "
+                        "WHERE o.nonce=? ORDER BY o.attempt", (nonce,))]
+
+    def current_attempt(self, nonce: str) -> Optional[dict]:
+        """Authority presented for an attempt, committed atomically with its claim."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT a.decision_json FROM execution_attempts a JOIN executions e "
+                "ON a.nonce=e.nonce AND a.attempt=e.attempts WHERE e.nonce=?", (nonce,)).fetchone()
+            return json.loads(row[0]) if row else None
+
+    def seed_successor(self, nonce: str, *, decision_id: str, proposal_id: str,
+                       completed: dict) -> None:
+        """Prepare fresh authority with retained receipts under a gateway lock.
+
+        The gateway atomically changes its stored active decision; callers cannot
+        submit an old decision. Approval reservations must never be inherited.
+        A crash before that change can leave an unused successor, but cannot
+        expose it for execution or invalidate the old request.
+        """
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                now = utcnow().isoformat()
+                self._conn.execute(
+                    "INSERT INTO executions VALUES (?, ?, ?, ?, 0, ?, ?, NULL)",
+                    (nonce, decision_id, proposal_id, STATUS_FAILED, now, now))
+                for key, receipt in completed.items():
+                    if key == "__oob_reservation__":
+                        continue
+                    self._conn.execute(
+                        "INSERT INTO execution_actions (nonce, action_key, completed_at, result_json) "
+                        "VALUES (?, ?, ?, ?)", (nonce, key, now,
+                            json.dumps(receipt, sort_keys=True, allow_nan=False)
+                            if receipt is not None else None))
+                self._conn.execute("COMMIT")
+            except BaseException:
+                self._conn.execute("ROLLBACK")
+                raise
 
     def completed_actions(self, nonce: str) -> FrozenSet[str]:
         """The action keys that have already succeeded under this nonce."""
@@ -333,6 +429,10 @@ class ExecutionLedger:
                     ")",
                     (cutoff,),
                 )
+                for table in ("execution_outcomes", "execution_contexts", "execution_attempts"):
+                    self._conn.execute(
+                        f"DELETE FROM {table} WHERE nonce IN (SELECT nonce FROM executions "
+                        "WHERE COALESCE(finished_at, first_seen_at) < ?)", (cutoff,))
                 removed = self._conn.execute(
                     "DELETE FROM executions "
                     "WHERE COALESCE(finished_at, first_seen_at) < ?",

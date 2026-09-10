@@ -74,11 +74,13 @@ def create_gateway_app(service: GatewayService):
     def execute(request_id: str, request: ExecuteRequest):
         return service.execute(request_id, request)
 
+    @app.post("/v1/requests/{request_id}/reauthorize", dependencies=[Depends(authenticated)])
+    def reauthorize(request_id: str):
+        return service.reauthorize(request_id)
+
     @app.get("/v1/audit", dependencies=[Depends(authenticated)])
     def audit():
-        return {"records": service.lineage.count(),
-                "valid": service.lineage.verify_chain_integrity(),
-                "public_key": service.lineage.public_key_hex}
+        return service.audit_status()
 
     return app
 

@@ -79,6 +79,7 @@ python -m pytest tests/test_evidence_attestation.py tests/test_world_model_trust
 python -m pytest tests/test_decision_integrity.py tests/test_replay_protection.py tests/test_oob_verification.py tests/test_bypass_regressions.py -q
 python -m pytest tests/test_fail_closed.py tests/test_enforcement_properties.py tests/test_registry_integrity.py tests/test_boundary_hardening.py -q
 python -m pytest tests/test_corrigibility.py tests/test_reconciler_resilience.py tests/test_lineage_identity.py tests/test_lineage.py -q
+python -m pytest tests/test_phase_authority.py tests/test_dispatch_authority.py tests/test_execution_journal.py tests/test_gateway_recovery.py tests/test_gateway_audit_recovery.py -q
 ```
 
 ## 3. Check the authorization and evidence protocol
@@ -99,6 +100,10 @@ well as the decision record.
 | One authorization cannot produce concurrent duplicate dispatch. | Present the same decision sequentially, concurrently, and after restart. Durable nonce and approval ledgers must preserve the claimed scope; inspect side effects, not only exceptions. | `test_replay_protection.py`, `test_bypass_regressions.py` |
 | Higher authorization levels require the correct human approval. | Omit, forge, substitute or reuse an approval. L2+ must not execute automatically; approval must bind the decision and be reserved before dispatch. | `test_oob_verification.py`, `test_approval_gating.py` |
 | A resumed operation skips already completed actions. | Fail after an earlier action completed and then retry. Earlier recorded successes must not dispatch twice. Separately inspect the tool-side crash window; local completion tracking does not alone guarantee exactly-once external effects. | `test_replay_protection.py` |
+| Required phase authority reaches the execution gate. | Configure a low-risk action with a required L2/L3 phase, or L4 phase. The signed outer level must enforce approval or human-only escalation; count executor effects. This does not test a post-execution outcome lifecycle. | `test_phase_authority.py` |
+| Every new action has current authority and evidence. | Expire the decision, signed approval or evidence after action one; action two must not start. Tampering with the signed approval timestamp must fail, including old v1 signatures. | `test_dispatch_authority.py`, `test_gateway_recovery.py`; [approval migration](APPROVAL_MIGRATION.md) |
+| Gateway recovery preserves operation identity. | Interrupt a gateway instance or expire authority after a partial effect. Recover using the same request/proposal and idempotency keys; completed receipts survive and renewed L2 authority requires a fresh approval. Exercise a second process sharing the SQLite state. | `test_gateway_recovery.py`, `test_execution_journal.py` |
+| Audit delivery failure cannot hide a settled outcome. | Inject a journal, lineage or response-write failure and reopen stores. Check status and receipts, pending audit fields, idempotent delivery and separate audit `valid`/`complete` results. Do not interpret a valid chain as proof every external effect is known. | `test_execution_journal.py`, `test_gateway_audit_recovery.py` |
 | Replanning remains within policy and halt scope. | Mutate generator inputs, keep proposing a forbidden action, or retarget after halt. Shared governance state must remain unchanged and forbidden/halted work must not dispatch. | `test_strategy_isolation.py`, `test_adversarial.py`, `test_corrigibility.py` |
 | Audit evidence detects the tampering it claims to detect. | Edit, remove or reorder stored records without the lineage key, and append concurrently. Verification must reject corruption without silently dropping legitimate records. A store-plus-key attacker remains outside the local chain's guarantee. | `test_lineage.py`, `test_lineage_identity.py` |
 | A bad entity does not silently terminate reconciliation. | Feed malformed/timezone-sensitive input alongside a valid entity. The loop must surface the failure and continue handling other entities. | `test_reconciler_resilience.py`, `test_time_boundary.py` |
@@ -160,6 +165,13 @@ For the gateway deployment, assess these threat scenarios explicitly:
 - The gateway or tool fails before dispatch, during a side effect, or before
   the result is recorded. Distinguish safe retry, ambiguous outcome and manual
   reconciliation; do not infer exactly-once behavior from a success response.
+- A second gateway instance contends for the same request while the first runs
+  longer than the generic execution lease. The shared requests-database writer
+  lock must prevent overlapping dispatch; HTTPX I/O timeouts do not prove a
+  total-duration bound. A killed owner must release the lock for recovery.
+- A settled effect's audit delivery fails. Retrieve the same request and inspect
+  its durable result and `audit_status`; restore the store and verify one eventual
+  lineage event per journaled attempt, without another settled tool effect.
 - A human halts the relevant scope while work is queued. Verify the actual
   dispatch-time gate and document whether an already executing action can stop.
 - Signed evidence is authentic but stale or factually wrong. Document what the

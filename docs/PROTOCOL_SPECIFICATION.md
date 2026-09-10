@@ -176,6 +176,16 @@ Constraint-Guided Autonomy operates at each phase independently. If the outcome 
 
 Single-gate actions remain the default. Most routine operations need only one governance evaluation. Multi-Phase Authorization is configured per action type in the Action Type Registry for complex lifecycles where the gap between intent and outcome introduces governance-relevant uncertainty.
 
+> **Implementation status: partial.** The reference kernel evaluates configured
+> phases before dispatch using the same proposal and world state. It promotes
+> the strongest required phase authorization into the signed outer decision,
+> which the execution fabric enforces: L2/L3 require signed human approval; L4
+> escalates without authorizing agent execution. Its `escalation_on_deviation`
+> flag conservatively raises a later phase to at least L2 after a prior approval;
+> it does not compare a produced result with the original intent. A separate
+> post-execution outcome gate, output validation and per-phase replanning remain
+> unimplemented. See `tests/test_phase_authority.py` and the conformance matrix.
+
 #### Dynamic Risk Escalation (Added 2026-02-23)
 
 The Action Type Registry assigns each action type a default authorization level based on its configured risk profile. This is the static risk posture — the baseline governance configuration for normal operations. However, the actual risk of an action depends not only on its type but on its runtime context: what data it accesses, what volume of operations it has performed, what patterns its recent behavior exhibits, and what external conditions have changed since the static configuration was set.

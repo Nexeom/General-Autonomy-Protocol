@@ -65,6 +65,6 @@ class GatewayConfig(StrictModel):
     approvers: dict[str, str]
     targets: list[str] = Field(min_length=1)
     tools: dict[str, ToolDefinition]
-    # Bounds all dispatches below the ledger's 300-second lease. No client can
-    # extend this timeout or change the endpoint.
+    # HTTPX timeouts bound individual I/O waits, not total batch duration.
+    # Cross-process dispatch exclusion comes from the requests DB transaction.
     tool_timeout_seconds: float = Field(default=5, gt=0, le=10)

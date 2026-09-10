@@ -53,6 +53,13 @@ documented subset. GAP is not an established industry standard or a certificatio
   access to the live sink's exact IP and unavailable private directories.
   This is project-run automated validation, not an external security review.
   The [review guide](docs/REVIEW_GUIDE.md) separates these kinds of evidence.
+- Current source addresses five further review findings: required phase
+  authority, signed approval timestamps, checks before each action, interrupted
+  request recovery, and recovery of outcome records after audit failure. See
+  [the remediation record](docs/KNOWN_GAPS.md#september-review-remediation) for
+  scope and regression tests. Earlier recorded runs do not validate later edits.
+  The package remains `0.3.0a1`; the [v2 human approval format](docs/APPROVAL_MIGRATION.md)
+  deliberately rejects previously issued v1 approvals.
 
 ## Getting started
 
@@ -99,10 +106,10 @@ constructor is not equivalent to a governed deployment.
 | Capability | Current scope |
 |---|---|
 | Policy evaluation | Signed applicability profile, registered action types, authorization floors, structured rejection, and fail-closed handling for supported constraint evaluation. Policy authors are responsible for the policy's meaning and completeness. |
-| Signed decisions and approval | Ed25519 signatures bind the decision to its proposal, nonce and expiry. L2+ execution requires separately signed approval. Durable ledgers track use and completed actions; external tools still need explicit failure and idempotency semantics. |
+| Signed decisions and approval | Ed25519 signatures bind the decision to its proposal, nonce and expiry. L2/L3 execution requires separately signed approval with authenticated timestamps; the kernel escalates L4 to human authority. Validity is checked before each new action. Required phase authority raises the execution gate, but actual post-execution outcome phases remain unimplemented. |
 | Signed evidence | The consent and contact-hour evaluators verify issuer signatures over entity identity, exact property values and validity window. This covers the two world-model evaluators, not every domain evaluator. A signature proves an issuer made an assertion; it does not prove the assertion true. Revocation is not implemented, so old evidence can remain acceptable within its freshness ceiling. |
 | Replanning | A pluggable `StrategyGenerator` receives structured constraints and a copy of world state. The reference generator chooses among three CRM rules. There is no implemented Proposer/Critic pair or demonstrated general LLM replanning. |
-| Audit evidence | Decision lineage is hash-chained and signed. Stored canonical bytes support signature verification. There is no external witness: a party controlling both the lineage store and its signing key can rewrite and re-sign history. |
+| Audit evidence | Decision lineage is hash-chained and signed. The gateway journals settled outcomes durably and retries delivery to lineage; audit validity and delivery completeness are reported separately. There is no external witness: a party controlling both the lineage store and its signing key can rewrite and re-sign history. |
 | Human halt and reconciliation | A shared kill switch gates planning and dispatch; the reconciler contains per-entity failures and tracks drift/escalations. The embedded switch uses a free-text actor label and an in-memory audit log. |
 | Behavioral monitoring | Authorization drift and repeated sub-threshold activity are fed by the CGA loop. Other detectors require telemetry that the default path does not provide. Heuristic alerts do not establish semantic understanding of harmful behavior. |
 
@@ -115,8 +122,14 @@ output validation remain planned. Consult the
 The [reference gateway](docs/GATEWAY.md) owns its policy, evidence, tool catalog,
 credentials and dispatch. Its agent API accepts only allowlisted tool requests
 and signed approval artifacts. A deployment-owned halt file blocks new work and
-is checked before each dispatch. This is a narrow reference integration; it does
-not automatically expose every embedded-runtime feature through the gateway.
+is checked before each dispatch, alongside current policy/evidence and authority
+validity. Gateway instances sharing the same SQLite state serialize execution.
+An explicit reauthorization can renew an unfinished request while retaining its
+proposal, completed receipts and tool idempotency keys; L2 requires fresh human
+approval. [Recovery instructions](docs/GATEWAY.md#recovery-and-reauthorization)
+explain the conditions and failure states. External tools still need their own
+idempotency/reconciliation contract. This is a narrow reference integration; it
+does not automatically expose every embedded-runtime feature through the gateway.
 
 ## Architecture and trust boundary
 
