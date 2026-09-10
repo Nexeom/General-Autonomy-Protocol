@@ -99,10 +99,19 @@ _BASELINE_ACTION_TYPES: Dict[str, ActionTypeSpec] = {
 # ---------------------------------------------------------------------------
 
 def _is_constraint_active(constraint: Constraint, current_time: datetime) -> bool:
-    """Determine if a constraint is active based on temporal authority."""
+    """Determine temporal activation, conservatively retaining unknown gates.
+
+    Runtime condition expressions are not implemented. Any supplied condition
+    keeps the policy active, even alongside a nonmatching schedule: an unknown
+    condition must never silently remove a HARD constraint. The string is not
+    evaluated, and this fallback does not claim to implement its meaning.
+    """
     activation = constraint.activation
 
     if activation.always:
+        return True
+
+    if activation.condition is not None:
         return True
 
     if activation.schedule:

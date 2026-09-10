@@ -11,6 +11,31 @@ period. Everything below is the first set of changes recorded.
 
 ## [Unreleased]
 
+### 0.3.0a1 release candidate — governed tool boundary
+
+- Incorporated the existing signed-evidence work: kernel-side issuer verification
+  binds entity identity, exact values and freshness; agent-written stamps do not
+  confer authority.
+- Fixed concurrent claims on failed retries and conservative activation of
+  unsupported runtime conditions; blocked reserved audit-provenance merges.
+- Added an authenticated two-tool gateway owning policy, world model, signing
+  keys, approval/execution ledgers and dispatch, plus a durable idempotent local
+  outbox and operator-owned halt marker.
+- Added a real optional LangGraph integration, runnable HTTP demo, separately
+  reviewed human approval CLI, and explicit Docker filesystem/network isolation.
+- Added measured functional scenarios for forbidden/permitted actions, approval
+  gates, concurrency, restart and partial failure. Scope and denominators are
+  published in `docs/EVALUATION.md`; no LLM-quality or independent-audit claim.
+- Added hashed dependency locks, pinned container base, reproducible alpha build
+  tooling and a review guide. Corrected stale "no tags" prose: `v0.2.0-alpha`
+  already exists.
+
+The gateway protects only its allowlisted tools when separately deployed. It
+does not make embedded execution immune to co-resident code, validate legal
+compliance, or provide an externally witnessed audit chain.
+
+### Earlier untagged change notes
+
 Five waves of security remediation. The governance surface changed shape in ways
 a deployment cannot absorb silently — read **Breaking** first. Signed decisions
 produced by the previous version do not verify against this one.

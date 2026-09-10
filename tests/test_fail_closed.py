@@ -10,6 +10,8 @@ These tests assert the kernel denies by default rather than silently passing:
 
 from datetime import datetime
 
+import pytest
+
 from gap_kernel._time import utcnow
 from gap_kernel.governance.kernel import GovernanceKernel, _is_constraint_active
 from gap_kernel.models.governance import GovernanceVerdict
@@ -146,6 +148,30 @@ def test_valid_schedule_outside_window_is_inactive():
     )
     noon = datetime(2026, 6, 22, 12, 0, 0)
     assert _is_constraint_active(constraint, noon) is False
+
+
+@pytest.mark.parametrize("condition", ["account.over_budget", "false", ""])
+@pytest.mark.parametrize("schedule", [None, "0 3 * * *"])
+def test_unsupported_runtime_condition_keeps_hard_policy_enforced(condition, schedule):
+    """An unevaluated condition cannot authorize an otherwise forbidden action.
+
+    Even with a nonmatching cron expression, the unknown runtime condition is
+    treated conservatively as active. The condition string is never executed.
+    """
+    constraint = Constraint(
+        name="cost_ceiling",
+        type=ConstraintType.HARD,
+        description="Spend no more than $0",
+        activation=PolicyActivation(always=False, condition=condition, schedule=schedule),
+    )
+    decision = GovernanceKernel().evaluate_proposal(
+        proposal=_low_risk_proposal(),
+        intents=[_intent(hard=[constraint])],
+        world_state=_empty_world(),
+        current_time=datetime(2026, 9, 10, 12, 0, 0),
+    )
+    assert decision.verdict == GovernanceVerdict.REJECTED
+    assert "cost_ceiling" in decision.violated_constraints
 
 
 # --- Strict action typing --------------------------------------------------

@@ -17,7 +17,6 @@ logger = logging.getLogger("gap_kernel.world_model")
 # arbitrary fields, an external sensor payload) must not be able to forge them:
 # they are set only by a deliberate, single-key write from the component that
 # produced the outcome (see ``EntityState.record_contact``).
-PROTECTED_PROPERTIES = frozenset({"last_contacted", "contact_method"})
 
 # Properties a governed kernel's constraint evaluators read to decide whether an
 # action is permitted. They live here rather than in the store because the
@@ -46,6 +45,14 @@ EVIDENCE_PROPERTY = "_evidence_provenance"
 # ``gap_kernel.world_model.attestation``.
 EVIDENCE_ATTESTATION_PROPERTY = "_evidence_attestation"
 
+# Bulk writes cannot forge the store's audit breadcrumb either. Direct writes
+# remain available to the store's own _stamp method. The SIGNED attestation is
+# deliberately absent: transports must carry externally issued blobs verbatim,
+# and only the kernel-side signature/value checks decide whether to trust them.
+PROTECTED_PROPERTIES = frozenset({
+    "last_contacted", "contact_method", EVIDENCE_PROPERTY,
+})
+
 # The drift log is embedded in every world-state snapshot, and every snapshot is
 # copied into a lineage record, so an unbounded log grows each audit record
 # without limit. Only recent drift is operationally meaningful; the durable
@@ -69,7 +76,7 @@ class EntityProperties(dict):
             del merged[key]
         if refused:
             logger.warning(
-                "Refused a property merge writing kernel-derived evidence: %s",
+                "Refused a property merge writing protected evidence metadata: %s",
                 ", ".join(sorted(refused)),
             )
         self._warn_on_direct_evidence_write(merged)

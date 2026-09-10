@@ -1,0 +1,23 @@
+include README.md LICENSE CHANGELOG.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md
+include pyproject.toml MANIFEST.in .gitignore .dockerignore
+graft gap_kernel
+graft docs
+graft tests
+graft examples
+graft deploy
+graft requirements
+graft tools
+graft action-types
+graft .github
+graft evaluation-results
+prune .git
+prune .venv
+prune build
+prune dist
+prune secrets
+prune .secrets
+prune .gap-*
+global-exclude __pycache__ *.py[cod] *.sqlite* *.db *.key *.pem *.p12 *.pfx
+global-exclude .env .env.* agent-token tool-token kernel_identity.json trust_root.json
+global-exclude approver.json profile-key.json evidence-key.json
+global-exclude */secrets/* */.secrets/* */.gap-*/*

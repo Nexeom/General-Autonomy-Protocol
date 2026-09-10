@@ -21,9 +21,9 @@ State machine
                           +----------------- begin ------------+
 
 * ``begin`` on an unknown nonce claims a fresh row (``resumed=False``).
-* ``begin`` on a FAILED row RESUMES it: the attempt counter advances,
-  ``last_attempt_at`` is stamped, and the actions that already completed are
-  returned so the caller can skip their side effects.
+* ``begin`` on a FAILED row RESUMES it: status becomes IN_PROGRESS atomically
+  with advancing the attempt counter and stamping ``last_attempt_at``. Actions
+  that already completed are returned so the caller can skip their side effects.
 * ``begin`` on a COMPLETE row raises :class:`ExecutionReplayError` — the
   authorization is spent.
 * ``begin`` on an IN_PROGRESS row whose lease is still live also raises: an
@@ -94,6 +94,11 @@ class ExecutionRow:
 
 class ExecutionLedger:
     """Append-and-settle record of decision executions, keyed on nonce."""
+
+    def close(self) -> None:
+        """Release the durable ledger connection when its owner shuts down."""
+        with self._lock:
+            self._conn.close()
 
     def __init__(
         self,
@@ -205,10 +210,13 @@ class ExecutionLedger:
                         f"be presented concurrently."
                     )
                 else:
+                    # A retry owns a new in-flight lease. Leaving the stored
+                    # status FAILED would let every concurrent retry enter this
+                    # branch even though the first recovered attempt is running.
                     self._conn.execute(
-                        "UPDATE executions SET attempts = attempts + 1, "
+                        "UPDATE executions SET status = ?, attempts = attempts + 1, "
                         "last_attempt_at = ? WHERE nonce = ?",
-                        (now, nonce),
+                        (STATUS_IN_PROGRESS, now, nonce),
                     )
                     result = ExecutionRow(
                         nonce=nonce,

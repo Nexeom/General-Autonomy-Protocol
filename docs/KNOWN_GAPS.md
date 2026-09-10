@@ -12,7 +12,16 @@ For the full earned/not-earned matrix see [CONFORMANCE.md](CONFORMANCE.md).
 
 ## Critical
 
-None open.
+No newly reproduced critical remains unaddressed in the bounded regression
+scenarios below. This is not a claim that no unknown critical exists. Read the
+deployment-specific architectural limits before enabling real tools.
+
+**September remediation:** failed retries now atomically persist `in_progress`
+before dispatch; the durable failure-then-concurrency regression proves a second
+claim is refused. Bulk property merges cannot restore the audit-only provenance
+stamp, and signed evidence from the existing evidence PR binds the actual values.
+Unsupported runtime conditions conservatively keep their policies active.
+Evidence: `tests/test_bypass_regressions.py`, `tests/test_fail_closed.py`.
 
 **C1 is closed. The evidence attestation stamp is now an Ed25519 signature.**
 Governance-relevant world-model properties used to carry a provenance stamp
@@ -50,8 +59,9 @@ not:
   ceiling passes, so **GAP is not compliant on immediate consent withdrawal**.
 * **It hardens 2 of the 9 registered evaluators** — see F8 below, which is the
   larger hole.
-* **It does not touch the execution boundary.** A1 is unchanged in every
-  particular.
+* **Signed evidence alone does not supply an execution boundary.** The separate
+  reference gateway and container topology described under A1 now address a
+  bounded two-tool integration; embedded callers retain the original limit.
 
 The five criticals found in the last review — unauthenticated action-type
 registration, unauthenticated world-model writes flipping a hard constraint,
@@ -103,13 +113,18 @@ after it was written and before it shipped, and all three are closed:
 
 ## Architectural
 
-**A1. Signature verification runs in the agent's process.**
+**A1. Embedded execution still runs in the agent's process.**
 `ExecutionFabric` holds the pinned kernel key and the unsigned-decisions escape
 hatch as ordinary mutable attributes, beside the executor registry, kill
 switch, world model and lineage store. Code execution in the agent process
 defeats governance without forging anything. Closing this needs an execution
-boundary — a socket or attach mode where dispatch is authorized by a process
-the agent cannot reach. Not built, not scheduled.
+boundary with keys and tool credentials inaccessible to the agent.
+`gap_kernel/gateway/` now owns authorization and dispatch for the reference
+`lookup` and `notify` tools. `deploy/compose.yaml` separates agent, gateway and
+credential-protected sink by mounts and networks. This control depends on the
+deployed container/OS boundary; merely starting same-user processes does not
+close A1. Container runtime, host administrators, gateway code and tool owners
+are trusted. See [GATEWAY.md](GATEWAY.md) and the separate container CI results.
 
 **A2. The lineage chain has no independent witness.**
 The chain anchor is signed, but the signing key is held by the process that
@@ -120,6 +135,10 @@ shorter chain. The real answer is external/WORM anchoring.
 **A3. The kill switch has no operator identity.**
 Engage and disengage take a free-text actor label and log to memory. Any
 in-process holder can flip it.
+The reference gateway instead recognizes an operator-owned `halted` file in
+its state directory and checks it before planning and each dispatch. There is
+no agent HTTP toggle. Its identity assurance is the service host's administrative
+access control; it cannot undo a tool call already in progress.
 
 ## Functional
 
@@ -150,9 +169,10 @@ unverified assertion is written into the lineage record.
 **F6. The learning engine's operational learning is write-only.**
 Heuristics are recorded and never consumed on any decision path.
 
-**F7. `PolicyActivation.condition` is a dead field that fails open.**
-A hard constraint declared by runtime condition is silently never enforced,
-because nothing reads the field.
+**F7. Runtime condition expressions are not evaluated; fail-open behavior fixed.**
+Any supplied `PolicyActivation.condition` conservatively activates the policy,
+including beside a nonmatching schedule. This may over-restrict actions, but
+does not silently drop a hard rule. A safe expression evaluator remains unbuilt.
 
 **F8. Proposal-borne regulatory metadata is unattested — the named follow-on to
 C1, and by count of affected categories a LARGER hole than the one C1 closed.**
@@ -180,6 +200,11 @@ is harder than C1 because there is no equivalent of a consent-of-record system
 for "this action is safety-critical" — the classification is often the agent's
 own, which is the actual problem. Not built, not scheduled.
 
+The reference gateway narrows this surface for its two tools: it rejects
+caller-supplied risk, cost, evidence and policy fields, and constructs proposals
+from an operator-controlled catalog. This is not a general classifier or a fix
+for arbitrary embedded callers of the other regulatory evaluators.
+
 ## Migration
 
 **M1. v1-signed decisions do not verify.**
@@ -194,13 +219,15 @@ world, reconciler, learning and escalation writers.
 
 ## Process
 
-**P1. No external security review.** Every finding fixed to date was found by
-the maintainers and their own tooling. A second pair of eyes has never audited
-this code.
+**P1. No independent external security review.** The implementation has automated
+review and regression evidence, not a third-party audit. The owner is preparing
+the repository before requesting outside review; [REVIEW_GUIDE.md](REVIEW_GUIDE.md)
+is the handoff package, not evidence that review occurred.
 
-**P2. No tagged release, no adopters, one author.** Nothing here has been
-exercised by an independent implementer, which is the strongest evidence a
-protocol can have and the evidence this project most lacks.
+**P2. No independent implementation/adoption evidence.** The prior
+`v0.2.0-alpha` tag exists; older documentation saying there were no tags was
+stale. The new alpha adds build provenance, not external implementation evidence.
+Independent deployment feedback remains needed.
 
 **P3. Published specifications with no implementation.**
 `GAP-AT-FIN-001 / SpendGate` is published under `action-types/` and has zero

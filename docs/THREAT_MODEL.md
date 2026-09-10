@@ -168,17 +168,20 @@ process:
    so a record can be altered, re-signed, and the chain anchor recomputed — and
    `verify_chain_integrity()` will pass.
 
-**What would change this:** an execution boundary. The fabric, the executors, the
-kill switch and the ledgers would have to sit behind the same kind of process
-boundary the kernel already has, with the agent side holding only a request
-channel. **That is not built.** There is no socket mode, no attach mode, and no
-partial version of it in the repository.
+**Reference gateway alternative:** `gap_kernel/gateway/` places the fabric,
+policy, keys, world model, ledgers and tool credentials in an independently
+deployed service. `deploy/compose.yaml` separates that service and its backend
+from the agent by container mounts, unprivileged users and internal networks.
+The API only accepts allowlisted tool intent and signed operator approvals.
+Its guarantees are specific to the two-tool deployment and depend on actual
+OS/network isolation. A same-user subprocess is insufficient. Host administrators,
+the container runtime, gateway and backend code remain trusted; runtime escapes
+and a compromised gateway are outside the claim. See [GATEWAY.md](GATEWAY.md)
+and the container boundary checks, including direct-IP backend reachability.
 
-**Therefore: GAP's enforcement is meaningful against an agent that plans,
-proposes, and negotiates. It is not meaningful against an agent that can run
-arbitrary code in its own process.** Treat "the agent obtained code execution" as
-a total compromise of GAP as currently implemented, and size the surrounding
-controls accordingly.
+**For embedded execution**, agent-process code execution remains a total
+compromise of enforcement. The reference gateway changes this assumption only
+when deployed with the documented separate authority and tool boundary.
 
 ---
 

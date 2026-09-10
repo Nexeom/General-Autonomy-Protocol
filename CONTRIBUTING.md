@@ -1,6 +1,7 @@
 # Contributing to GAP
 
-Thank you for your interest in contributing to the General Autonomy Protocol. GAP is an open standard, and community input is essential to making it robust, practical, and widely adopted.
+GAP is an open protocol proposal and experimental reference implementation.
+Implementation feedback and concrete evidence of enforcement failures are useful contributions.
 
 ## How to Contribute
 
@@ -28,7 +29,7 @@ Open a [Discussion](https://github.com/Nexeom/General-Autonomy-Protocol/discussi
 
 1. **Fork** the repository
 2. **Create a branch** from `main` (`git checkout -b feature/your-feature`)
-3. **Write tests** — all contributions must include tests. Current suite: 550 tests, 0 failures, 93% line coverage. CI enforces a 90% coverage floor, so a change that drops coverage below it fails the build.
+3. **Write meaningful tests** for behavior changes. CI enforces a 90% coverage floor; current results and scenario scope are recorded in [docs/EVALUATION.md](docs/EVALUATION.md).
 4. **Follow existing patterns** — Pydantic models for data structures, pytest for testing
 5. **Submit a Pull Request** with a clear description of what changed and why
 
@@ -53,7 +54,7 @@ pip install -e ".[dev]"
 # Run the test suite
 pytest tests/ -v
 
-# All 550 tests should pass before you submit a PR
+# The full suite should pass before you submit a PR
 ```
 
 ## Code Standards
@@ -67,13 +68,15 @@ pytest tests/ -v
   depends only on `pydantic`, `croniter`, and `cryptography`. Adding a runtime
   dependency needs justification in the PR.
 - `ruff check gap_kernel/ tests/` must pass — CI runs exactly this command
-- **No framework lock-in.** GAP does not depend on LangGraph, LangChain, or any
-  agent framework, and contributions must not introduce one. The kernel governs
-  abstract Decision Records; framework adapters belong outside the kernel.
+- **No framework dependency in the core.** Optional adapters live in
+  `gap_kernel/integrations/` and declare separate extras. The base kernel runs
+  without LangGraph; the reference adapter and its tests install `[langgraph]`.
 
 ## Protocol Governance
 
-Changes to the core protocol specification (Governance Kernel behavior, Decision Record schema, Iron Rule enforcement, authorization levels) require review by the protocol maintainers. This is intentional — the stability and reliability of the governance standard is itself a governance concern.
+Changes to the protocol proposal (kernel behavior, decision schema, isolation
+requirements and authorization levels) require maintainer review and evidence
+appropriate to the affected requirement.
 
 Additive changes (new Action Type configurations, domain-specific extensions, additional examples) have a lower review bar.
 

@@ -27,8 +27,26 @@ the [Threat Model](THREAT_MODEL.md). For what is known-broken right now, read
 | 🔧 **Deployment-configured** | Delivered by deployment topology, not by this codebase. The code provides the seam; the deployer provides the guarantee. |
 | 📋 **Normative / Planned** | Specified but not implemented. |
 
-Baseline: **639 tests**, 93% line coverage, CI-enforced 90% floor, on Python
-3.11–3.13 (Linux) and 3.13 (Windows).
+Per-revision verification and scenario denominators are recorded in
+[EVALUATION.md](EVALUATION.md) and CI. The configured suite gate remains 90%
+line coverage across Python 3.11–3.13 on Linux and 3.13 on Windows. A CI
+configuration is not itself evidence that a particular revision passed.
+
+## Reference tool gateway (v0.3 alpha)
+
+| Capability | Status | Evidence and boundary |
+|---|---|---|
+| Agent/tool credential separation | 🔧 Deployment-configured | `gateway/service.py` owns keys, policy, evidence, ledgers and dispatch. `deploy/compose.yaml` gives the agent only its request token on a separate internal network. Container checks include direct backend IP reachability. Same-user local demo is functional evidence only. |
+| Trusted proposal construction | ✅ Enforced | HTTP models forbid extra fields; the gateway rebuilds risk, cost, target and action type from the two-tool operator catalog. `tests/test_gateway.py`. |
+| Human L2 approval | ✅ Enforced | Operator validates the kernel signature and proposal digest, reviews the request, then signs; gateway verifies signature, authority ceiling, expiry and replay. Automated demo uses an explicitly scripted approver fixture. |
+| Durable retries and side-effect idempotency | 🟡 Partial | Failed retries persist `in_progress`; execution and approval ledgers survive gateway restart. Reference sink owns a persistent idempotency key/content binding, including lost-response retries. Generic external tools still require their own idempotency/fencing contract. |
+| Runtime conditions | 🟡 Partial | Unsupported conditions keep the policy active conservatively; no expression evaluator. `tests/test_fail_closed.py`. |
+| Operator halt | 🔧 Deployment-configured | Operator-owned `halted` file checked on proposal, execute and each dispatch; agent cannot toggle it through HTTP. Host/container admin access supplies identity assurance. In-flight effects cannot be undone. |
+| LangGraph integration | ✅ Enforced | Real compiled graph uses remote propose/execute API, bounds replanning and stops on approval waits/errors. `tests/test_langgraph_integration.py`; deterministic planners do not demonstrate LLM quality. |
+| Signed gateway evidence | 🟡 Partial | Allowed and early rejected requests have signed lineage. Requests/ledgers live outside agent mounts. No external witness/WORM anchor; trusted gateway owner can rewrite history. |
+
+This gateway covers `lookup` and `notify` only, not every mechanism in the
+embedded library matrix below. See [GATEWAY.md](GATEWAY.md).
 
 ---
 
@@ -77,7 +95,7 @@ Baseline: **639 tests**, 93% line coverage, CI-enforced 90% floor, on Python
 | **The kernel resolves its own trust root** | ✅ Enforced | Previously circular: the agent-side parent supplied **both** the signed profile and the public keys verifying it, so the child verified the attacker's signature against the attacker's key. The child now resolves `GAP_TRUST_ROOT` — a path the deployer owns — and with a trust root in force the registry the parent hands down is deliberately empty. Required by default; absence **raises**. → `tests/test_deployment_defaults.py` |
 | **Persistent, pinnable kernel identity** | ✅ Enforced | The keypair was regenerated every process start, so no external auditor could pin it. It now persists, and the subprocess client pins it. Detects child substitution and silent key regeneration; does **not** defend against an adversary already executing code in the parent. |
 | **Boundary robustness** — correlated, bounded, non-leaking | ✅ Enforced | Two concurrent evaluations could each receive **the other's signed decision** (no lock, no request id, sync routes on one shared client from a threadpool). Now request-id correlated under a lock, failing closed and killing the child on desync. Requests are size-bounded (the read was unbounded — the agent could OOM the governance authority); errors are stable codes rather than exception text carrying paths and field values; the child's stdout is off the protocol channel. → `tests/test_boundary_hardening.py` |
-| **Structural isolation of governance from the agent** (spec §Layer 1) | 🟡 Partial | **This is the requirement the implementation meets least completely, and the most important row in this document.** The kernel's key and configuration are isolated. Signature *verification* is not: `ExecutionFabric` is constructed in the agent's process and holds the pinned kernel key and the unsigned-decisions escape hatch as ordinary mutable attributes, alongside the executor registry carrying tool credentials, the kill switch, the world model and the lineage store. An adversary with **code execution in the agent process** bypasses governance without forging anything — overwrite the pinned key, flip the flag, or call an executor directly. The boundary bounds an attacker who supplies governance *data*; it does not bound one who runs code beside the verifier. A socket/attach execution boundary that would close this is **not built**. See [Threat Model §4](THREAT_MODEL.md). |
+| **Structural isolation of governance from the agent** (spec §Layer 1) | 🟡 Partial | **This is the requirement the implementation meets least completely, and the most important row in this document.** The kernel's key and configuration are isolated. Signature *verification* is not: `ExecutionFabric` is constructed in the agent's process and holds the pinned kernel key and the unsigned-decisions escape hatch as ordinary mutable attributes, alongside the executor registry carrying tool credentials, the kill switch, the world model and the lineage store. An adversary with **code execution in the agent process** bypasses governance without forging anything — overwrite the pinned key, flip the flag, or call an executor directly. The boundary bounds an attacker who supplies governance *data*; it does not bound one who runs code beside the verifier. The separately deployed two-tool gateway now moves verification and dispatch behind an HTTP boundary; see the deployment-specific table above. This does not change the embedded path. See [Threat Model §4](THREAT_MODEL.md). |
 | **OS-level sandboxing of the kernel subprocess** | 🔧 Deployment-configured | Running the kernel as a separate OS user is what makes the private key genuinely unreachable. Same-user isolation is hygiene, not a boundary. |
 
 ## Audit trail
@@ -157,12 +175,13 @@ Baseline: **639 tests**, 93% line coverage, CI-enforced 90% floor, on Python
 Stated plainly, because the alternative is the calibration gap this document
 exists to close:
 
-1. It does not defend against an adversary with code execution in the agent
-   process. That is the architecture, not a bug backlog item.
+1. The embedded library does not defend against an adversary with code execution
+   in its process. The reference gateway separates the agent into a restricted
+   container; its protection depends on the deployed network, mounts, and trusted host.
 2. It has had **no external security review**. Every finding fixed here was
    found by its own maintainers and tooling.
-3. It has **no adopters, no tagged release, and one author**. Nothing here has
-   been tested by an independent implementer.
+3. A prior `v0.2.0-alpha` release exists; `0.3.0a1` is the current candidate.
+   There is no documented independent adoption or implementation review.
 4. Its regulatory evaluators check structure, not legal compliance. No
    regulator has reviewed them, and alignment tables elsewhere describe design
    intent, not certification.

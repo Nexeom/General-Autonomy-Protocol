@@ -26,11 +26,16 @@ class PolicyTier(int, Enum):
 
 
 class PolicyActivation(BaseModel):
-    """Temporal authority — when this policy is active."""
+    """Temporal authority — when this policy is active.
+
+    Runtime conditions are reserved for a future evaluator. A supplied condition
+    currently keeps the policy conservatively active, including when a schedule
+    would otherwise be inactive; the expression is never executed.
+    """
 
     always: bool = True
     schedule: Optional[str] = None          # Cron expression
-    condition: Optional[str] = None         # Runtime condition
+    condition: Optional[str] = None         # Unsupported: conservatively active
     emergency_override: bool = False        # Suspends during declared emergencies
 
 

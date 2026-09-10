@@ -3,15 +3,18 @@
 ## Project status — read this first
 
 GAP is a **pre-release reference implementation**. `pyproject.toml` declares
-version `0.2.0-alpha`. There are no tagged releases, no published packages, and
-no external security review. The repository has one author.
+version `0.3.0a1` in this release candidate. The prior `v0.2.0-alpha` tag exists.
+No independent external security review has occurred. See the repository's
+release page for published tags and [docs/RELEASE.md](docs/RELEASE.md) for the
+reproducible build procedure.
 
 The governance kernel enforces real controls — kernel-signed decisions,
 single-use authorizations, a signed regulatory floor, a fail-closed evaluator —
 and those controls are adversarially tested. It also has a documented boundary
-it does not cross: **an adversary with code execution inside the agent process
-bypasses enforcement without forging anything.** That is not a bug report; it is
-the current architecture, described in
+it does not cross in embedded mode: **an adversary with code execution beside
+the execution fabric bypasses enforcement without forging anything.** The
+separately deployed two-tool gateway changes this topology only under the
+container/OS assumptions in [docs/GATEWAY.md](docs/GATEWAY.md). See
 [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
 
 Do not deploy GAP as the sole control on a system that can cause harm. Read
@@ -67,7 +70,7 @@ exactly one supported thing: the `main` branch.
 
 | Version | Status | Receives security fixes |
 |---|---|---|
-| `main` (currently `0.2.0-alpha`) | Active development; the only supported target | Yes — fixes land here |
+| Latest development branch / alpha | Active development; no production support promise | Yes — fixes land here |
 | Any fork, vendored copy, or checkout of an older commit | Unsupported | No — rebase onto `main` |
 
 Supported runtime: **Python 3.11+**, per `requires-python` in `pyproject.toml`.

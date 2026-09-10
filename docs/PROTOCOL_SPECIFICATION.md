@@ -1,23 +1,27 @@
 # General Autonomy Protocol (GAP)
 
-> **General Autonomy Protocol — the governance standard for autonomous action.**
+> **General Autonomy Protocol — an open protocol proposal for governed agent actions.**
 >
-> GAP defines how autonomous systems operate under governance — not how to make
-> systems autonomous. Think of it the way Internet Protocol defines how networked
-> communication operates, not how to build the internet. GAP is the governance
-> substrate: the rules of the road for machines that drive themselves.
+> GAP proposes runtime authorization, policy-constrained replanning and signed
+> decision evidence. It is one technical component of an AI governance program;
+> it does not replace organizational accountability, risk assessment or legal
+> interpretation.
 
-**Normative Protocol Specification**
+**Draft Normative Protocol Specification**
 
 **Nexeom** — February 2026
 
-> ⚠️ **Normative vs. implemented.** This document is the *normative standard* —
-> it states what a GAP-compliant system MUST do, often in absolute terms
+> ⚠️ **Normative vs. implemented.** This document is an *open protocol proposal* —
+> it states what a system conforming to the proposal MUST do, often in absolute terms
 > ("cannot", "immutable", "structurally"). For what the reference implementation
 > actually enforces and verifies today, see the
 > **[Conformance & Maturity Statement](CONFORMANCE.md)**. Treat unqualified
 > structural language here as a requirement on conformant implementations, not a
 > claim that every deployment already meets it.
+> “GAP-compliant” below means conformity to this proposed set of requirements;
+> it does not mean certification, regulatory compliance or recognition by a
+> standards body. No external assessment of this reference implementation is
+> claimed.
 >
 > 🗺️ **Non-normative material lives elsewhere.** The strategic roadmap, business
 > model, and competitive positioning that this document previously carried are in
@@ -28,11 +32,11 @@
 
 ## 1. Executive Summary
 
-The General Autonomy Protocol (GAP) is the governance infrastructure that makes autonomous AI systems accountable. The name describes the problem domain, not the product claim — General Autonomy is the category of challenge; GAP is the protocol that solves it. Current AI systems either operate without governance or remain constrained by human bottlenecks. GAP provides the third option: governed, accountable, general-purpose autonomous action.
+The General Autonomy Protocol (GAP) proposes a common structure for authorizing autonomous actions and recording the evidence behind them. A policy authority defines constraints, a strategy proposes actions, and an enforcement point checks authorization before dispatch. Rejected proposals can be revised within the same policy boundary or escalated to a human.
 
-The core thesis: Intelligence without autonomy is a research project. Autonomy without governance is a liability. General Autonomy is the synthesis — the infrastructure that makes AGI deployable in institutional and regulatory contexts.
+The reference implementation is an experimental alpha. Its decision models, signatures, policy evaluation and execution controls support a subset of this proposal. They do not establish that a model is safe, that an encoded policy is legally correct, or that an organization has met its governance obligations.
 
-The industry narrative arc: First we built intelligence (LLMs). Then we built agency (agent frameworks, tool use). The missing third layer is **autonomy** — governed, accountable, general-purpose autonomous action. GAP is the protocol that standardizes this layer.
+“General Autonomy” is the project's term for pursuing goals within human-defined authority. GAP explores policy-bound replanning, signed authorization and decision lineage as one way to support that objective. Existing policy, identity, orchestration and audit systems address related concerns; this document does not claim that GAP invented the governance category or these individual mechanisms.
 
 ### 1.1 Architecture at a Glance
 
@@ -92,23 +96,24 @@ See [`action-types/`](../action-types/) for all specifications.
 
 ## 2. Category Definition: General Autonomy
 
-General Autonomy is both the challenge and the category. The challenge: AI systems that can act generally across any domain need governance that is equally general. The category: the infrastructure layer that provides it. GAP is the protocol standard for this layer — not a path to autonomy, but the control plane that makes autonomy deployable.
+General Autonomy names the design goal of agents that can pursue objectives while remaining within declared authority. GAP is an open protocol proposal for part of that control plane. Generality is an extensibility goal: each domain still needs appropriate policy, trustworthy evidence, tool integration and evaluation.
 
-**The Full Stack:**
+**Terms used in this proposal:**
 
 | Layer | Name | Function |
 |---|---|---|
-| **Category** | General Autonomy | The paradigm — successor to General Intelligence |
-| **Protocol** | GAP (General Autonomy Protocol) | The standard for governed autonomous action |
-| **Platform** | Nexeom | The first GAP-native Decision Intelligence platform |
+| **Design goal** | General Autonomy | Goal pursuit within human-defined authority |
+| **Protocol proposal** | GAP (General Autonomy Protocol) | Proposed requirements for governed autonomous action |
+| **Project author** | Nexeom | Maintainer of this proposal and reference implementation |
 | **Architecture** | The Kernel Spec | Reference implementation: Reconciler, Governance Kernel, CGA Loop, Decision Lineage |
 | **Data Object** | The Decision Record | Primary unit of value — structured for accountability, not conversation |
 
-**What General Autonomy Is Not:**
+**Relationship to other controls:**
 
-- **Not orchestration.** Orchestration frameworks sequence tasks. GAP governs the authority, reasoning, and accountability of autonomous decisions.
-- **Not observability.** Observability tools monitor what happened. GAP captures why it happened, who authorized it, and whether it should have happened.
-- **Not access control.** Access control gates permissions. GAP governs the full decision lifecycle from reasoning through execution through outcome reconciliation.
+- **Orchestration:** A framework can generate and sequence proposed actions. A GAP integration adds policy evaluation and bounded rejection/replanning at controlled action boundaries.
+- **Observability and audit:** Operational logs and independent tool receipts remain important. Decision Records add declared rationale, policy decisions and authorization evidence; a recorded rationale is not a verified account of a model's internal reasoning.
+- **Identity and access control:** Trusted identities, credential custody and complete mediation of tool access are prerequisites for enforcing a GAP decision. Decision evaluation does not replace those controls.
+- **Organizational governance:** Responsible owners determine approved uses, policy content, risk acceptance, oversight and recourse. Runtime checks implement an encoded subset of those decisions.
 
 ---
 
@@ -118,15 +123,15 @@ GAP operates through three structurally distinct layers. Governance is not a che
 
 ### Layer 1: Governance Kernel (Immutable)
 
-The foundational governance layer that cannot be modified by the autonomous system itself. It defines authority boundaries, policy constraints, and escalation thresholds. The Iron Rule governs all system evolution: learning may modify strategy weights and skills through GAP governance, but never governance policy boundaries without explicit human approval. Enforcement is structural rather than procedural. Policy enforcement governs what the agent *should not* do; structural enforcement determines what it *cannot* do. A GAP-compliant implementation MUST isolate governance infrastructure from the governed agent's execution environment, such that the agent cannot read, modify, or forge the Governance Kernel's code, configuration, or enforcement mechanisms — the guarantee is the absence of a path, not a permission the agent has been denied.
+The foundational governance layer defines authority boundaries, policy constraints and escalation thresholds. Learning may modify strategy weights and skills through GAP governance, but governance policy changes require the designated human authority. A conforming implementation MUST isolate the trusted enforcement mechanism from the governed agent: the agent must not be able to obtain its private keys, alter its deployed code or trusted configuration, replace its verifier, or dispatch a controlled action through an alternative path. Public source code and policy explanations need not be secret. The threat model must identify the operating-system, credential and network assumptions supporting this boundary.
 
-This is a normative requirement, and it is the requirement this repository's reference implementation meets least completely: the kernel's signing key and governance configuration are isolated out of process, but signature *verification* still runs inside the agent's process. See the [Conformance Statement](CONFORMANCE.md) and [Threat Model](THREAT_MODEL.md) for exactly which part of this requirement is earned today.
+This is a normative requirement with deployment-specific limits. The existing embedded execution path separates the kernel's signing key and governance configuration into a subprocess, but signature *verification* and tool dispatch still run inside the agent's process. The reference tool gateway moves evaluation, verification, credentials and dispatch into a trusted service. Its same-user local demonstration is a functional test; isolation additionally requires restricted files, credentials and network paths in the actual deployment. Container verification is pending. See the [Conformance Statement](CONFORMANCE.md), [Threat Model](THREAT_MODEL.md), [Gateway Guide](GATEWAY.md) and [Review Guide](REVIEW_GUIDE.md) for the current paths and evidence.
 
-Governance Integrity Monitoring (GIM) extends the Iron Rule from a static architectural guarantee to a dynamic behavioral guarantee. While the Iron Rule ensures the system cannot modify governance configuration, GIM ensures the system cannot indirectly erode governance effectiveness through behavioral adaptation. GIM defines five monitoring requirements across authorization drift, audit behavior divergence, threshold-avoidance decomposition, escalation framing bias, and adversarial collapse. Together with the Iron Rule and human oversight, GIM forms a three-layer defense in depth: architectural (static), behavioral (dynamic), and institutional (judgment). See the [GIM specification](gap-governance-integrity-monitoring.md) for full requirements, including its implementation-status section.
+Governance Integrity Monitoring (GIM) supplements isolation with behavioral monitoring for indirect policy evasion. It defines five monitoring requirements across authorization drift, audit behavior divergence, threshold-avoidance decomposition, escalation framing bias, and adversarial collapse. Detection depends on telemetry, classifier quality and deployment wiring; these monitors cannot guarantee detection of every adaptive behavior. Together with isolation and human oversight, they provide complementary controls. See the [GIM specification](gap-governance-integrity-monitoring.md) for full requirements, including its implementation-status section.
 
 - Graduated authorization levels (L0–L4) from fully autonomous to human-required
 - Temporal policy activation — policies can be time-bound and context-sensitive
-- Cryptographically-chained decision lineage for tamper-proof audit trails
+- Cryptographically-chained decision lineage for tamper-evident audit trails, within the stated signing-key and storage trust model
 - Adversarial validation gates at every authorization boundary
 
 #### Action Type Registry (Added 2026-02-20)
@@ -221,9 +226,9 @@ Tier 3 modifications follow existing GAP governance: they pass through the Propo
 
 This hierarchy is enforced by the Governance Kernel at every policy evaluation. When the Kernel evaluates a proposed action, it checks Tier 1 first. If Tier 1 rejects, the action is denied absolutely. If Tier 1 passes, Tier 2 is evaluated. If Tier 2 rejects, CGA engages within Tier 2 bounds. Tier 3 parameters influence how the agent proposes actions but do not participate in governance evaluation — they shape behavior upstream of the Governance Kernel, not within it.
 
-**Why This Is a Protocol-Level Requirement.** Every governance system faces the configuration problem: if a human administrator can configure the system to permit legally non-compliant actions, the governance is a preference, not a guarantee. Permission-based systems (IAM, RBAC, API access controls) are configuration-dependent by design — they do whatever the administrator configures. This is appropriate for access control but insufficient for governance of autonomous systems that execute actions with legal consequences.
+**Why This Is a Protocol-Level Requirement.** The authority that approves policy must be distinct from the agent operating under it. GAP, like other policy and access-control systems, depends on correctly configured authority and rules. A signed profile makes unauthorized runtime changes detectable; it cannot make an incorrect policy correct.
 
-Policy Tier Classification eliminates the configuration risk by separating what can be configured from what cannot. Regulatory constraints are not configurable. Organizational policies are configurable within regulatory bounds. Operational parameters are tunable within organizational bounds. The hierarchy is structural, not advisory.
+Policy Tier Classification separates policy authoring from runtime optimization. The regulatory floor is configured by its designated authority and is immutable to the runtime; organizational policy and operational parameters must remain within that encoded floor. Configuration risk remains with profile selection, policy authoring, evidence quality and deployment integration.
 
 #### Applicability Profiles (Added 2026-03-15)
 
@@ -261,11 +266,11 @@ This is what makes GAP deployable at scale. Without Applicability Profiles, ever
 
 The Tier 1 Regulatory Floor is populated by Regulatory Constraint Categories — classes of legal obligation that autonomous AI systems must satisfy. GAP defines eight categories: three Universal (active in every GAP deployment) and five Domain-Activated (loaded when the Applicability Profile includes the relevant domain).
 
-The protocol defines the categories and their structural requirements. Specific regulatory content within each category is jurisdiction-dependent and domain-configured through the Action Type Registry. This follows GAP's established extensibility pattern: protocol defines the mechanism, implementation defines the configuration.
+The proposal defines categories and intended structural requirements. Specific regulatory content is jurisdiction-dependent and must be configured and reviewed by the deployment's policy authority. The legal references below are illustrative context, not a current or exhaustive legal survey. Their inclusion neither establishes applicability to a particular deployment nor claims implementation of every listed obligation.
 
 **Universal Categories (Always Active)**
 
-These categories apply to every GAP-compliant deployment regardless of domain, jurisdiction, or action type scope. They represent legal obligations that are effectively universal across all jurisdictions where autonomous AI systems operate.
+The proposal requires every conforming deployment to consider these categories. That is a protocol design choice, not a claim that identical legal obligations apply to every action or jurisdiction. Evaluators must apply the deployment's reviewed policy and evidence requirements to the actual action.
 
 **Category 1: Data Privacy Constraints**
 
@@ -436,9 +441,9 @@ When a governed action produces a consequential decision affecting an individual
 
 The Decision Summary is a human-readable explanation of the decision that can be provided to the affected individual upon request. It includes: the action taken, the primary factors in the decision, the data sources consulted, and the mechanism by which the individual may contest the decision. The Summary is derived from the Decision Record's reasoning chain and Uncertainty Declaration but is formatted for non-technical comprehension.
 
-The Decision Summary does not expose proprietary algorithms, trade secrets, or internal governance configurations. It provides sufficient transparency for the affected individual to understand the decision and exercise their rights without revealing the system's internal architecture. This satisfies employment law notice requirements, consumer protection disclosure obligations, and the EU AI Act's right to explanation for high-risk AI decisions.
+The Decision Summary should provide understandable information while applying appropriate privacy and confidentiality controls. It is intended to support notice, explanation and contestability processes. A generated summary does not establish that any particular employment, consumer-protection or AI-law obligation has been satisfied; adequacy depends on the actual decision, applicable requirements and the organization's review process.
 
-Decision Records serve as legal authorization evidence. In an agency law context, the Decision Record documents the scope of delegated authority, the specific authorization for the action, and the constraints under which the agent operated. When a court asks whether a principal authorized an action taken by an autonomous agent, the Decision Record provides the evidentiary answer.
+Decision Records can preserve evidence of declared authority, approval and constraints for later investigation. Their evidentiary value depends on authenticity, identity binding, completeness, retention and the surrounding facts. This proposal does not determine legal agency, admissibility or liability.
 
 ### External Decision Record Storage (Recommendation — Added 2026-02-23)
 
@@ -452,7 +457,7 @@ GAP requires cryptographically-chained Decision Records with tamper-evident inte
 
 The financial_transaction Action Type specification (GAP-AT-FIN-001) demonstrates this pattern with its dual audit trail concept: the Decision Record captures governance reasoning, the settlement ledger captures execution, and neither alone is sufficient for institutional accountability.
 
-For implementations using blockchain or distributed ledger infrastructure, anchoring Decision Record hashes alongside transaction execution provides cryptographic proof that governance evaluation preceded and authorized every action. This is the strongest available accountability guarantee but is not required for protocol compliance.
+Anchoring Decision Record hashes in independently controlled storage can help detect later rewriting or omission relative to a witnessed checkpoint. It does not, by itself, prove that every real-world action was mediated, that the signed policy was correct, or that the recorded outcome is true. The reference implementation has no external witness, and this proposal does not require a particular ledger technology.
 
 Additionally, implementations should monitor Decision Record integrity in real-time. If a governed agent produces actions that do not appear in the Decision Record chain — or if Decision Records appear with broken cryptographic chains — this constitutes a governance integrity failure. The Reconciler should treat Decision Record integrity as part of its continuous state reconciliation: the record of what was decided must be consistent with what was executed.
 
@@ -490,11 +495,11 @@ Parent Agents receive high-level objectives and decompose them into sub-tasks. T
 
 ## 6. RGAP: Retro General Autonomy Protocol
 
-GAP is architecturally resistant to retrofitting as a sidecar because governance must be a substrate, not a checkpoint. However, the market requires a migration path. RGAP solves this through execution hijacking with graceful fallback.
+Retro General Autonomy Protocol (RGAP) describes how an existing agent workflow can send proposed tool actions through GAP evaluation and feed structured rejection back to its planner. This branch includes an optional LangGraph adapter for the reference gateway, with deterministic lookup, replanning and approval fixtures. It is a limited reference integration, not complete implementation of every proposed RGAP capability or coverage of other agent frameworks.
 
-### Why GAP Cannot Be a Sidecar
+### Integration requirements
 
-Most agentic frameworks (LangChain, CrewAI, AutoGen) treat governance as a gate. The CGA loop changes the execution model itself — it requires access to internal reasoning state, not just I/O boundaries. A sidecar evaluating a conclusion without seeing the deliberation is performing an audit, not adversarial reasoning. Decision Lineage requires instrumentation at the reasoning layer, not the I/O layer.
+A tool gateway can enforce authorization at an action boundary if it is the only route to the tool and owns its credentials outside the agent's trust domain. Bounded replanning additionally requires the workflow to handle rejection, approval and escalation states. Capturing proposed plans and declared rationale can improve reviewability; access to private model chain-of-thought is neither assumed nor required. A framework wrapper alone does not establish credential isolation or complete mediation.
 
 ### How RGAP Works
 
@@ -502,7 +507,7 @@ RGAP intercepts at the action execution point — the thinnest possible integrat
 
 ### RGAP Captures Decision Negotiation Lineage
 
-While RGAP cannot capture full internal deliberation lineage, it captures the complete negotiation loop: what was proposed, why it was denied, what constraints were injected, what was re-proposed, and what was finally authorized. This is decision negotiation lineage — arguably more useful for institutional audit than internal reasoning logs because it shows governance actively shaping outcomes.
+An RGAP integration should capture the observable negotiation loop: proposals, rejection reasons, constraints returned, revisions and final authorization or escalation. This is evidence about the instrumented workflow, not a complete record of a model's internal deliberation. Completeness must be checked against dispatch and tool-side observations.
 
 ---
 
@@ -526,13 +531,16 @@ not a conformance requirement — GAP prescribes properties, not a stack.
 The kernel's runtime dependencies are `pydantic`, `croniter`, and `cryptography`
 only — the kernel is the component that holds the signing key, so its dependency
 surface is kept minimal deliberately. FastAPI and uvicorn are an `[api]` extra;
-the governance core runs without them. **There is no LangGraph dependency and no
-LangGraph integration** — an earlier revision of this table named it as the state
-machine, which was never accurate.
+the governance core runs without them. The gateway adds HTTP service/client
+dependencies through `[gateway]`; the optional adapter uses `[langgraph]`.
+The [Gateway Guide](GATEWAY.md) gives their install and execution commands.
+LangGraph is not the kernel's state machine or a required core dependency.
 
 ### Initial Use Case: CRM Lead Response Compliance
 
-The reference implementation's worked example is GAP governing autonomous CRM lead responses under GDPR consent and contact-hour constraints while meeting SLA requirements. It is exercised through the default rule-based strategy generator and the test suite; there is no separate demo application. This is a deliberately constrained scope chosen to prove generality of architecture: the Governance Kernel operates on abstract Decision Records, and domain knowledge (CRM, GDPR) lives entirely in the Strategy Layer. The kernel does not know or care that it is governing a CRM workflow.
+The reference implementation's original worked example applies configured consent and contact-hour policies to CRM lead responses. Its rule-based strategy chooses among direct outreach, querying before outreach and human handoff. This demonstrates a bounded control flow; it does not establish general LLM replanning, legal compliance or that human-initiated contact is exempt from a consent requirement. The separate `examples/governed_demo.py` exercises the reference gateway over local HTTP with generated identities, a harmless outbox, a scripted approval fixture and a deterministic LangGraph workflow. It is functional evidence, not a model benchmark or a deployment-isolation test.
+
+The architecture uses common Decision Record and action models, with domain-specific policy and evaluators. The bundled kernel contains explicit consent and contact-hour logic, so domain knowledge is not confined to the Strategy Layer. Extending the action registry is one part of adapting GAP to a new domain; evidence sources, evaluator semantics, tool integration and validation must also be supplied.
 
 ---
 
@@ -540,7 +548,7 @@ The reference implementation's worked example is GAP governing autonomous CRM le
 
 - **The Iron Rule:** Learning modifies strategy weights and skills. Never governance policy boundaries. Human authority over constraints is inviolable. Enforcement is structural, not just procedural — governed agents operate in environments architecturally isolated from governance infrastructure. There is no path to modify what cannot be accessed.
 
-- **Dynamic Governance Integrity (Added 2026-03-10):** Static guarantees are necessary but not sufficient. Sophisticated systems find indirect paths around governance — classifying actions at lower levels than warranted, behaving differently under audit, decomposing tasks to avoid thresholds, framing escalations to bias approval, or allowing adversarial mechanisms to collapse. Governance Integrity Monitoring provides the dynamic behavioral guarantee: independent, continuous, isolated monitoring for indirect erosion. The Iron Rule says the system cannot touch governance. GIM says the system cannot work around governance.
+- **Dynamic Governance Integrity (Added 2026-03-10):** Monitoring should look for under-classification, changes in behavior under audit, threshold-avoidance decomposition, biased escalation framing and loss of effective challenge. Independence, telemetry coverage and response to alerts must be evaluated. A detector is a control with false-positive and false-negative risks, not a guarantee that no policy evasion is possible.
 
 - **Governance Begins at Intent (Added 2026-03-15):** A governance chain that starts after the system has already interpreted what the human wants is a governance chain with an ungoverned origin. Structured Intent Resolution ensures that intent is formally declared, meta-analyzed, bounded, and mutually confirmed before the CGA loop engages. The system does not assume it understands intent. It confirms.
 
@@ -550,7 +558,7 @@ The reference implementation's worked example is GAP governing autonomous CRM le
 
 - **Constraint-Guided, Not Constraint-Stopped:** The system hears "no" and finds a governed path to "yes." Rejections are constraints, not failures.
 
-- **Domain Agnostic by Construction:** The Governance Kernel operates on abstract Decision Records. Domain knowledge lives in the Strategy Layer, not the protocol. The Action Type Registry enables domain-specific governance configuration without protocol modification.
+- **Domain Extensibility:** Common decision and action models support domain-specific profiles, strategies and evaluators. The reference kernel includes domain logic; a new domain needs validated policy and evidence semantics as well as action registration.
 
 - **Proactive, Not Reactive:** Continuous state reconciliation against declared intents. The system detects drift and acts, it doesn't wait to be told.
 
@@ -562,7 +570,7 @@ The reference implementation's worked example is GAP governing autonomous CRM le
 
 - **Proportional Governance (Added 2026-03-15):** Governance scales with risk, not uniformly. A scheduling agent and a lending agent do not carry the same governance burden because they do not carry the same legal and operational risk. The Applicability Profile mechanism ensures that each deployment is governed proportionally to what the agent actually does, the data it handles, the jurisdictions it operates in, and the consequences of its actions. This is not optional flexibility — it is a design requirement. Over-governance makes autonomous systems unusable. Under-governance makes them unsafe. Proportional governance achieves both deployability and trust by applying the right constraints to the right actions. Every major regulatory framework — the EU AI Act, NIST AI RMF, ISO 42001, Colorado AI Act — uses risk-based classification. Proportional Governance is GAP's structural implementation of this principle.
 
-- **Adversarial Integrity Verification (Recommendation — Added 2026-02-23):** *Non-normative.* GAP-compliant implementations should periodically subject the Governance Kernel's structural isolation to adversarial testing by an independent evaluation entity. The Iron Rule's structural enforcement — that governed agents cannot access governance infrastructure — is a critical security property. Verification that this property holds under adversarial conditions should not rely solely on design-time analysis. Recommended practice includes: red-team testing by agents specifically designed to discover paths to governance infrastructure, automated scanning for isolation boundary violations, and formal verification of process isolation mechanisms where feasible. Organizations seeking GAP certification (see [`ROADMAP.md`](ROADMAP.md)) should expect adversarial integrity verification as a certification requirement.
+- **Adversarial Integrity Verification (Recommendation — Added 2026-02-23):** *Non-normative.* Implementations should subject their stated isolation and enforcement boundaries to adversarial testing. A review should identify the exact revision, deployment, attacker capabilities, tests, findings and unresolved limits. Independent review can provide evidence beyond maintainer testing when it is actually performed. There is no GAP certification program; the [Review Guide](REVIEW_GUIDE.md) prepares a reproducible package without claiming or commissioning an outside review.
 
 > **Note on this repository.** The adversarial reviews recorded in `docs/` were
 > run by the project itself, not by an independent evaluation entity. This
@@ -576,6 +584,7 @@ The reference implementation's worked example is GAP governing autonomous CRM le
 |---|---|
 | [`CONFORMANCE.md`](CONFORMANCE.md) | What the reference implementation enforces and verifies today, versus what this document requires. Normative claims here are gated by that matrix. |
 | [`ROADMAP.md`](ROADMAP.md) | Non-normative: strategic roadmap, business model, competitive positioning. Formerly §8–§10 of this document. |
+| [`REVIEW_GUIDE.md`](REVIEW_GUIDE.md) | Reproducible maintainer review package and a basis for any later independent assessment. |
 | [`gap-governance-integrity-monitoring.md`](gap-governance-integrity-monitoring.md) | GIM extension specification (GIM-1…GIM-5). |
 | [`gap-structured-intent-resolution.md`](gap-structured-intent-resolution.md) | SIR extension specification (SIR-1…SIR-5). |
 | [`../action-types/`](../action-types/) | Published Action Type specifications. |

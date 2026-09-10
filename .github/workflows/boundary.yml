@@ -1,0 +1,54 @@
+name: Isolated gateway
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  docker-boundary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Set deployment paths
+        run: |
+          echo "GAP_DEMO_DIR=$RUNNER_TEMP/gap-demo" >> "$GITHUB_ENV"
+          echo "GAP_UID=$(id -u)" >> "$GITHUB_ENV"
+          echo "GAP_GID=$(id -g)" >> "$GITHUB_ENV"
+      - name: Build pinned image before issuing short-lived evidence
+        run: docker compose -f deploy/compose.yaml build
+      - name: Install locked environment
+        run: |
+          python -m pip install --require-hashes -r requirements/alpha-py312.txt -r requirements/build-py312.txt
+          python -m pip install --no-deps --no-build-isolation -e .
+      - name: Provision isolated roles and start trusted services
+        run: |
+          python -m gap_kernel.gateway.provision "$GAP_DEMO_DIR" --tool-url http://sink:8091
+          docker compose -f deploy/compose.yaml up -d --wait sink gateway
+      - name: Verify agent cannot reach backend even by its IP
+        run: |
+          sink_id=$(docker compose -f deploy/compose.yaml ps -q sink)
+          GAP_TEST_SINK_IP=$(docker inspect "$sink_id" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+          test -n "$GAP_TEST_SINK_IP"
+          export GAP_TEST_SINK_IP
+          docker compose -f deploy/compose.yaml exec -T -e GAP_TEST_SINK_IP="$GAP_TEST_SINK_IP" gateway python -c "import os,urllib.request; urllib.request.urlopen('http://' + os.environ['GAP_TEST_SINK_IP'] + ':8091/health', timeout=3)"
+          mkdir -p evaluation-results
+          docker compose -f deploy/compose.yaml run --rm agent | tee evaluation-results/container-boundary.json
+      - name: Run functional evaluations
+        run: python examples/evaluate.py --output evaluation-results/ci-linux.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gateway-evidence
+          path: evaluation-results/*.json
+      - name: Shut down services
+        if: always()
+        run: docker compose -f deploy/compose.yaml down
