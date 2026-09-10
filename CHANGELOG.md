@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Early entries recorded the initial untagged implementation. The repository
-subsequently published `v0.2.0-alpha`; the next candidate is `0.3.0a1`.
+subsequently published `v0.2.0-alpha`; the current alpha version is `0.3.0a1`.
 
 ## [0.3.0a1] — 2026-09-10
 
