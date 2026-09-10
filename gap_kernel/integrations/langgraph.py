@@ -247,8 +247,11 @@ def build_governed_graph(planner: Planner, gateway: GatewayClient, *, max_attemp
         return update
 
     def execute(state: AgentState) -> dict[str, Any]:
+        request_id = state["request_id"]
+        if request_id is None:
+            return {"status": "failed", "completed": False, "reason": "missing gateway request ID"}
         try:
-            record = gateway.execute(state["request_id"])
+            record = gateway.execute(request_id)
         except GatewayError as exc:
             return {"status": "failed", "completed": False, "reason": str(exc)}
         return {

@@ -1,0 +1,43 @@
+{
+  "source": {
+    "pr_head": "e940f0c6851fdccec50d504ba1c720242e5c1e9d",
+    "ci_checkout": "10d7249f7938846061e15f7933fe792c23611aea",
+    "workflow_run": "https://github.com/Nexeom/General-Autonomy-Protocol/actions/runs/34496186876",
+    "job_id": 102935116099
+  },
+  "scope": "Observed GitHub-hosted Linux Docker Compose reference topology; maintainer-run automation, not an independent audit",
+  "positive_control": "Gateway successfully fetched /health from the inspected sink IP before the agent was denied access.",
+  "observed_result": {
+    "passed": true,
+    "checks": {
+      "gateway_private_directory_unavailable": {
+        "passed": true
+      },
+      "operator_private_directory_unavailable": {
+        "passed": true
+      },
+      "sink_private_directory_unavailable": {
+        "passed": true
+      },
+      "tool_token_not_mounted": {
+        "passed": true
+      },
+      "sink_hostname_connection_blocked": {
+        "passed": true,
+        "detail": "sink name does not resolve on the agent network"
+      },
+      "sink_exact_ip_connection_blocked": {
+        "passed": true,
+        "detail": "OSError"
+      },
+      "unapproved_target_rejected": {
+        "passed": true,
+        "status": "rejected"
+      },
+      "authorized_lookup_completed": {
+        "passed": true,
+        "status": "completed"
+      }
+    }
+  }
+}

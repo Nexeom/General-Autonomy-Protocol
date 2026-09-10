@@ -59,6 +59,17 @@ result for a changed test suite or a different environment. The evaluation
 artifact separately identifies its git revision, working-tree source hash and
 dependency versions.
 
+For the recorded hosted validation, the
+[CI run](https://github.com/Nexeom/General-Autonomy-Protocol/actions/runs/34496186894)
+passed 746 tests with 92.82% line coverage on Python 3.11, 3.12 and 3.13, ten
+demo checks, and reproducible-build checks on Linux. Its Windows/Python 3.13
+job also passed. The separate
+[Docker boundary run](https://github.com/Nexeom/General-Autonomy-Protocol/actions/runs/34496186876)
+passed all eight checks against the documented topology after confirming
+gateway access to the sink's exact IP. These are project-run automated results
+for the recorded revision and environments; they do not claim an independent
+review.
+
 The following focused commands are useful for tracing a claim or reproducing a
 failure after the baseline run. They need not all be rerun when the complete
 suite already covered them and no relevant code has changed.
@@ -114,7 +125,7 @@ approval and a container-isolation check are separate exercises.
 |---|---|---|
 | Governed demo | `python examples/governed_demo.py`; ten local functional checks passed in the branch run. | Inspect individual checks and outbox behavior. Scripted approval must not be reported as human oversight. |
 | Reference tool gateway | `gap_kernel/gateway/`; unit/integration entry point `tests/test_gateway.py`. [GATEWAY.md](GATEWAY.md) documents the HTTP and operator paths. | Verification, approval, nonce reservation and tool credentials live outside the agent process; malformed or unauthorized requests cannot invoke the tool. Isolation also requires the deployed boundary. |
-| Docker network example | [`deploy/compose.yaml`](../deploy/compose.yaml), [`examples/container_check.py`](../examples/container_check.py); commands in [GATEWAY.md](GATEWAY.md). **Not run locally: Docker/WSL unavailable.** | From the agent container, direct access to the protected tool fails and tool credentials are unavailable. The same permitted action succeeds through the gateway. Inspect mounts, network membership and privilege settings. |
+| Docker network example | [`deploy/compose.yaml`](../deploy/compose.yaml), [`examples/container_check.py`](../examples/container_check.py); commands in [GATEWAY.md](GATEWAY.md). [Recorded Linux run: 8/8 checks passed](https://github.com/Nexeom/General-Autonomy-Protocol/actions/runs/34496186876). | From the agent container, direct access to the live protected tool fails and tool credentials are unavailable. The permitted lookup succeeds through the gateway. Recheck mounts, network membership and privilege settings for the deployment under review. |
 | LangGraph adapter | `.[langgraph]` extra; `examples/langgraph_agent.py`; `tests/test_langgraph_integration.py`. The local demo uses the actual framework. | The workflow routes its tool calls through the governed path, propagates structured rejection, bounds retries and reaches an approval/escalation state without treating every denial as an exception to bypass. |
 | Evaluation harness | `python examples/evaluate.py --output evaluation-results/local.json`; the local branch run passed 26/26 deterministic scenarios with exit code 0. See [EVALUATION.md](EVALUATION.md) for the recorded result and metric definitions. | Check both the exit code and top-level `passed`. The JSON includes scenario observations, fixed denominators, category latency, source identity, dependencies and infrastructure errors. |
 

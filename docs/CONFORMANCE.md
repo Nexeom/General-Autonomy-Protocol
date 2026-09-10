@@ -180,7 +180,7 @@ exists to close:
    container; its protection depends on the deployed network, mounts, and trusted host.
 2. It has had **no external security review**. Every finding fixed here was
    found by its own maintainers and tooling.
-3. A prior `v0.2.0-alpha` release exists; `0.3.0a1` is the current candidate.
+3. A prior `v0.2.0-alpha` release exists; `0.3.0a1` is the current alpha version.
    There is no documented independent adoption or implementation review.
 4. Its regulatory evaluators check structure, not legal compliance. No
    regulator has reviewed them, and alignment tables elsewhere describe design

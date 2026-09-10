@@ -27,14 +27,19 @@ documented subset. GAP is not an established industry standard or a certificatio
 
 ## Maturity
 
-- Package version: **`0.3.0a1`**, an alpha release candidate that is not yet
-  tagged. A prior [v0.2.0-alpha release](https://github.com/Nexeom/General-Autonomy-Protocol/releases/tag/v0.2.0-alpha)
-  exists. There is no published adoption report or external security review.
-  Current review is maintainer-led.
+- Package version: **`0.3.0a1`**, an alpha. See
+  [GitHub Releases](https://github.com/Nexeom/General-Autonomy-Protocol/releases)
+  for versioned tags and artifacts, including the prior `v0.2.0-alpha` release.
+  There is no published adoption report or external security review. Current
+  review is maintainer-led.
 - CI is configured for Python 3.11–3.13 on Linux and 3.13 on Windows, with a 90%
   line-coverage floor, regression/property tests, Ruff, and an install check.
   Type checking is advisory. Test totals and coverage should be read from the
   run for the commit under review, rather than treated as security guarantees.
+- [Recorded CI validation](https://github.com/Nexeom/General-Autonomy-Protocol/actions/runs/34496186894)
+  passed 746 tests with 92.82% coverage on Python 3.11, 3.12 and 3.13, the ten
+  demo checks, and reproducible-build checks on Linux. The Windows/Python 3.13
+  job also passed. The run identifies the tested revision and environments.
 - [CONFORMANCE.md](docs/CONFORMANCE.md) records enforcement, wiring and deployment
   limits. [KNOWN_GAPS.md](docs/KNOWN_GAPS.md) records unfinished work. These take
   precedence over a summary here; passing tests do not erase their limitations.
@@ -42,20 +47,23 @@ documented subset. GAP is not an established industry standard or a certificatio
   runnable governed demo. The local functional demo passes its ten scripted
   checks; it uses the same OS user and a scripted approval fixture. A separate
   [26-scenario evaluation](docs/EVALUATION.md) reports completion, blocking,
-  escalation and latency with explicit denominators. Docker/WSL is unavailable
-  in the local review environment, so live container isolation remains untested
-  there. The [review guide](docs/REVIEW_GUIDE.md) separates these kinds of evidence.
+  escalation and latency with explicit denominators. The
+  [Linux Docker boundary run](https://github.com/Nexeom/General-Autonomy-Protocol/actions/runs/34496186876)
+  passed all eight checks for the documented topology, including denied direct
+  access to the live sink's exact IP and unavailable private directories.
+  This is project-run automated validation, not an external security review.
+  The [review guide](docs/REVIEW_GUIDE.md) separates these kinds of evidence.
 
 ## Getting started
 
-Use a Python 3.11+ virtual environment. The commands below select this candidate
-branch after cloning; if you already have its checkout, start at the install
+Use a Python 3.11+ virtual environment. The commands below select the versioned
+alpha after cloning; if you already have its checkout, start at the install
 command. Record the commit with the review results.
 
 ```bash
 git clone https://github.com/Nexeom/General-Autonomy-Protocol.git
 cd General-Autonomy-Protocol
-git checkout codex/governed-alpha
+git checkout v0.3.0a1
 python -m pip install -e ".[dev]"
 python examples/governed_demo.py
 python examples/evaluate.py --output evaluation-results/local.json

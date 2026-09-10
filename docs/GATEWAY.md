@@ -6,9 +6,11 @@ tool intent to a bounded HTTP API. It cannot submit a replacement policy, world
 model, risk score, signed decision, executor or dispatch URL through that API.
 
 This is an alpha reference integration for two tools and one demonstration
-target. It is not a general-purpose proxy for arbitrary tools. Docker/WSL is
-unavailable in the local review environment, so container deployment checks
-remain unrun there; see the [Review Guide](REVIEW_GUIDE.md).
+target. It is not a general-purpose proxy for arbitrary tools. The documented
+Compose topology passed all eight boundary checks in the
+[Linux Docker CI run](https://github.com/Nexeom/General-Autonomy-Protocol/actions/runs/34496186876).
+That is project-run automated evidence for the tested topology, not an external
+audit or a guarantee for other deployments; see the [Review Guide](REVIEW_GUIDE.md).
 
 ## Supported workflow
 
@@ -183,14 +185,19 @@ and the HTTP boundary. A custom `--planner module:callable` is an integration
 point for a real model; this repository does not claim model-backed evaluation
 from the fixture results.
 
-## Container deployment — not run in the local review
+## Container deployment and observed CI
 
 [`deploy/compose.yaml`](../deploy/compose.yaml) defines the network and mount
 separation above. Its Dockerfile installs from hashed dependency files, then
-installs the package without resolving extra dependencies. **The live container
-boundary has not been validated locally because Docker/WSL is unavailable.**
-Static configuration inspection and the same-user demo do not replace that
-check.
+installs the package without resolving extra dependencies. The
+[recorded Linux Docker run](https://github.com/Nexeom/General-Autonomy-Protocol/actions/runs/34496186876)
+first confirmed that the sink's exact backend IP was reachable from the gateway,
+then passed all eight agent-side checks: three unavailable private directories,
+unavailable tool-token paths, blocked sink hostname and exact-IP connections,
+rejection of an unapproved target, and completion of an authorized lookup.
+These observed checks cover this configuration and runner. Repeat them after
+deployment changes; static inspection or the same-user demo does not replace
+the live check.
 
 Run the following from a non-root Linux or WSL shell with Docker Compose
 available, at the repository root. Use your ordinary host UID/GID so the

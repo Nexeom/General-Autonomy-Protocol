@@ -8,17 +8,23 @@ and their limits live in [CONFORMANCE.md](CONFORMANCE.md).
 ## Current evidence
 
 The project has an alpha Python reference implementation, a test suite and
-maintainer-led reviews. The prior [v0.2.0-alpha release](https://github.com/Nexeom/General-Autonomy-Protocol/releases/tag/v0.2.0-alpha)
-is tagged; the current `0.3.0a1` candidate is not yet tagged. There is no published
+maintainer-led reviews. The package version is `0.3.0a1` alpha; see
+[GitHub Releases](https://github.com/Nexeom/General-Autonomy-Protocol/releases)
+for versioned tags and artifacts, including `v0.2.0-alpha`. There is no published
 adoption report or external security review. This roadmap is not evidence of commercial traction,
 certification, third-party approval or a production deployment.
 
 A two-tool gateway, optional LangGraph adapter and runnable governed demo are
-implemented for the `0.3.0a1` alpha candidate. The local demo passes ten functional checks using
+implemented for the `0.3.0a1` alpha. The local demo passes ten functional checks using
 the same OS user and a scripted approver; it does not demonstrate deployment
 isolation. The [evaluation harness](EVALUATION.md) covers 26 deterministic
-scenarios and records revision, environment and denominators. Live container
-validation remains unrun locally because Docker/WSL is unavailable. Code
+scenarios and records revision, environment and denominators. The
+[Linux Docker run](https://github.com/Nexeom/General-Autonomy-Protocol/actions/runs/34496186876)
+passed all eight boundary checks for the documented topology, and the
+[CI validation run](https://github.com/Nexeom/General-Autonomy-Protocol/actions/runs/34496186894)
+passed 746 tests across Linux/Python 3.11–3.13 and reproducible-build checks;
+the Windows/Python 3.13 job also passed. These
+are project-run automated results, not independent deployment evidence. Code
 presence alone does not satisfy the milestones below. The current reviewer is
 the maintainer. No outside review request is implied by preparation of the
 [review package](REVIEW_GUIDE.md).

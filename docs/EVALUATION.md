@@ -90,6 +90,33 @@ is the concrete observed run. Its `passed`, `metrics`, and any
 describes the evaluation contract rather than promising a passing result on
 every platform.
 
+## Observed candidate results
+
+The checked-in Windows run evaluated clean source commit `e940f0c` with
+package version `0.3.0a1`: **26/26 scenarios passed**, **8/8 prohibited cases
+prevented**, **14/14 permitted tasks completed**, **0/14 observed false blocks**,
+and **2/2 approval-contract cases passed**. Ten lookup scenarios had observed
+p50 **71.436 ms** and p95 **92.267 ms** on that machine; these include the
+scenario's HTTP operations and are not isolated kernel timings.
+
+The [Linux/Windows CI run](https://github.com/Nexeom/General-Autonomy-Protocol/actions/runs/34496186894)
+records the per-platform tests. Its Linux Python 3.12 job passed **746 tests**
+with **92.82% line coverage**. The demo and two reproducible alpha artifact
+builds also passed. Read the run's individual job results for other platforms.
+
+The separate [live Docker run](https://github.com/Nexeom/General-Autonomy-Protocol/actions/runs/34496186876)
+passed all eight reference-boundary checks and the 26 functional scenarios.
+[The retained boundary result](../evaluation-results/container-ci.json) records
+the PR head and synthetic merge commit used by CI. The agent could access an
+authorized record through the gateway; its private-directory, credential-mount,
+backend-hostname, and backend-IP checks passed. The gateway first reached the
+same backend IP as a positive control. This is evidence for the documented
+Docker topology on that hosted Linux runner, not for arbitrary deployments.
+
+These are maintainer-run automated results. They are not independent
+implementation feedback or an external security audit. Later documentation and
+evidence-only commits do not change which source revision each result measures.
+
 ## Limits of this evidence
 
 All local processes share the evaluator's OS user. This harness does **not**

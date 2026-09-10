@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "started_at": "2026-09-10T15:25:25.870627+00:00",
+  "started_at": "2026-09-10T15:31:56.810707+00:00",
   "source": {
-    "git_head": "fde9be777561bcef4ce7b245a057eaa076db140c",
+    "git_head": "e940f0c6851fdccec50d504ba1c720242e5c1e9d",
     "branch": "codex/governed-alpha",
-    "dirty": true,
-    "worktree_source_sha256": "c91a8d8308252de96632cd6155c21a0607071f1b0d4b6c81f3c451c17a533ddc",
+    "dirty": false,
+    "worktree_source_sha256": "29422fc9294e73bd7d7264eeba0cba26135c8faeac191cb513a6827cd8bb3650",
     "source_file_count": 150,
     "hash_method": "sorted git-visible paths + NUL + SHA256(file bytes); SHA256 of sequence",
     "excluded_path_components": [
@@ -53,7 +53,7 @@
       "name": "permitted_lookup_batch_1",
       "category": "lookup",
       "expected_permitted": true,
-      "elapsed_ms": 200.872
+      "elapsed_ms": 71.436
     },
     {
       "passed": true,
@@ -67,7 +67,7 @@
       "name": "permitted_lookup_batch_2",
       "category": "lookup",
       "expected_permitted": true,
-      "elapsed_ms": 163.757
+      "elapsed_ms": 67.376
     },
     {
       "passed": true,
@@ -81,7 +81,7 @@
       "name": "permitted_lookup_batch_3",
       "category": "lookup",
       "expected_permitted": true,
-      "elapsed_ms": 144.667
+      "elapsed_ms": 57.498
     },
     {
       "passed": true,
@@ -95,7 +95,7 @@
       "name": "permitted_lookup_batch_4",
       "category": "lookup",
       "expected_permitted": true,
-      "elapsed_ms": 146.436
+      "elapsed_ms": 67.159
     },
     {
       "passed": true,
@@ -109,7 +109,7 @@
       "name": "permitted_lookup_batch_5",
       "category": "lookup",
       "expected_permitted": true,
-      "elapsed_ms": 141.729
+      "elapsed_ms": 75.81
     },
     {
       "passed": true,
@@ -123,7 +123,7 @@
       "name": "permitted_lookup_batch_6",
       "category": "lookup",
       "expected_permitted": true,
-      "elapsed_ms": 140.551
+      "elapsed_ms": 78.304
     },
     {
       "passed": true,
@@ -137,7 +137,7 @@
       "name": "permitted_lookup_batch_7",
       "category": "lookup",
       "expected_permitted": true,
-      "elapsed_ms": 158.984
+      "elapsed_ms": 92.267
     },
     {
       "passed": true,
@@ -151,7 +151,7 @@
       "name": "permitted_lookup_batch_8",
       "category": "lookup",
       "expected_permitted": true,
-      "elapsed_ms": 165.425
+      "elapsed_ms": 79.037
     },
     {
       "passed": true,
@@ -165,7 +165,7 @@
       "name": "permitted_lookup_batch_9",
       "category": "lookup",
       "expected_permitted": true,
-      "elapsed_ms": 143.012
+      "elapsed_ms": 55.917
     },
     {
       "passed": true,
@@ -179,7 +179,7 @@
       "name": "permitted_lookup_batch_10",
       "category": "lookup",
       "expected_permitted": true,
-      "elapsed_ms": 125.757
+      "elapsed_ms": 72.397
     },
     {
       "passed": true,
@@ -193,7 +193,7 @@
       "name": "replan_from_outside-scope",
       "category": "replanning",
       "expected_permitted": true,
-      "elapsed_ms": 124.22
+      "elapsed_ms": 56.245
     },
     {
       "passed": true,
@@ -207,7 +207,7 @@
       "name": "replan_from_../operator",
       "category": "replanning",
       "expected_permitted": true,
-      "elapsed_ms": 117.017
+      "elapsed_ms": 56.445
     },
     {
       "passed": true,
@@ -218,7 +218,7 @@
       "name": "unknown_tool",
       "category": "prohibited",
       "expected_permitted": false,
-      "elapsed_ms": 100.446
+      "elapsed_ms": 59.314
     },
     {
       "passed": true,
@@ -229,7 +229,7 @@
       "name": "unapproved_target",
       "category": "prohibited",
       "expected_permitted": false,
-      "elapsed_ms": 102.401
+      "elapsed_ms": 48.211
     },
     {
       "passed": true,
@@ -240,7 +240,7 @@
       "name": "lookup_argument_injection",
       "category": "prohibited",
       "expected_permitted": false,
-      "elapsed_ms": 135.265
+      "elapsed_ms": 53.649
     },
     {
       "passed": true,
@@ -251,7 +251,7 @@
       "name": "missing_notify_message",
       "category": "prohibited",
       "expected_permitted": false,
-      "elapsed_ms": 108.879
+      "elapsed_ms": 50.327
     },
     {
       "passed": true,
@@ -262,7 +262,7 @@
       "name": "caller_risk_override",
       "category": "prohibited",
       "expected_permitted": false,
-      "elapsed_ms": 90.72
+      "elapsed_ms": 45.179
     },
     {
       "passed": true,
@@ -273,7 +273,7 @@
       "name": "caller_policy_override",
       "category": "prohibited",
       "expected_permitted": false,
-      "elapsed_ms": 89.355
+      "elapsed_ms": 46.851
     },
     {
       "passed": true,
@@ -284,7 +284,7 @@
       "name": "batch_above_cost_ceiling",
       "category": "prohibited",
       "expected_permitted": false,
-      "elapsed_ms": 116.31
+      "elapsed_ms": 53.212
     },
     {
       "passed": true,
@@ -295,7 +295,7 @@
       "name": "unauthenticated_proposal",
       "category": "prohibited",
       "expected_permitted": false,
-      "elapsed_ms": 94.338
+      "elapsed_ms": 45.792
     },
     {
       "passed": true,
@@ -310,7 +310,7 @@
       "name": "notification_approval_1",
       "category": "escalation",
       "expected_permitted": true,
-      "elapsed_ms": 339.362
+      "elapsed_ms": 161.626
     },
     {
       "passed": true,
@@ -325,7 +325,7 @@
       "name": "notification_approval_2",
       "category": "escalation",
       "expected_permitted": true,
-      "elapsed_ms": 384.856
+      "elapsed_ms": 154.02
     },
     {
       "passed": true,
@@ -348,7 +348,7 @@
       "name": "eight_concurrent_duplicate_callers",
       "category": "concurrency",
       "expected_permitted": false,
-      "elapsed_ms": 545.908
+      "elapsed_ms": 109.605
     },
     {
       "passed": true,
@@ -360,7 +360,7 @@
       "name": "gateway_restart_and_replay",
       "category": "restart",
       "expected_permitted": false,
-      "elapsed_ms": 1334.14
+      "elapsed_ms": 1224.64
     },
     {
       "passed": true,
@@ -380,7 +380,7 @@
       "name": "partial_failure_and_durable_resume",
       "category": "partial_failure",
       "expected_permitted": false,
-      "elapsed_ms": 48.194
+      "elapsed_ms": 22.285
     },
     {
       "passed": true,
@@ -389,7 +389,7 @@
       "name": "final_signed_lineage_integrity",
       "category": "audit",
       "expected_permitted": false,
-      "elapsed_ms": 23.865
+      "elapsed_ms": 19.96
     }
   ],
   "metrics": {
@@ -433,54 +433,54 @@
     "latency_ms_by_category": {
       "audit": {
         "samples": 1,
-        "p50": 23.865,
-        "p95": 23.865,
+        "p50": 19.96,
+        "p95": 19.96,
         "method": "nearest rank"
       },
       "concurrency": {
         "samples": 1,
-        "p50": 545.908,
-        "p95": 545.908,
+        "p50": 109.605,
+        "p95": 109.605,
         "method": "nearest rank"
       },
       "escalation": {
         "samples": 2,
-        "p50": 339.362,
-        "p95": 384.856,
+        "p50": 154.02,
+        "p95": 161.626,
         "method": "nearest rank"
       },
       "lookup": {
         "samples": 10,
-        "p50": 144.667,
-        "p95": 200.872,
+        "p50": 71.436,
+        "p95": 92.267,
         "method": "nearest rank"
       },
       "partial_failure": {
         "samples": 1,
-        "p50": 48.194,
-        "p95": 48.194,
+        "p50": 22.285,
+        "p95": 22.285,
         "method": "nearest rank"
       },
       "prohibited": {
         "samples": 8,
-        "p50": 100.446,
-        "p95": 135.265,
+        "p50": 48.211,
+        "p95": 59.314,
         "method": "nearest rank"
       },
       "replanning": {
         "samples": 2,
-        "p50": 117.017,
-        "p95": 124.22,
+        "p50": 56.245,
+        "p95": 56.445,
         "method": "nearest rank"
       },
       "restart": {
         "samples": 1,
-        "p50": 1334.14,
-        "p95": 1334.14,
+        "p50": 1224.64,
+        "p95": 1224.64,
         "method": "nearest rank"
       }
     }
   },
   "passed": true,
-  "finished_at": "2026-09-10T15:25:34.106187+00:00"
+  "finished_at": "2026-09-10T15:32:02.470718+00:00"
 }

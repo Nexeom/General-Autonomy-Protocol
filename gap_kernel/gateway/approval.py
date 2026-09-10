@@ -14,7 +14,8 @@ def validate_request(response: dict, approver_file: str | Path):
     identity = json.loads(Path(approver_file).read_text())
     decision = GovernanceDecision.model_validate(response["decision"])
     proposal = StrategyProposal.model_validate(response["proposal"])
-    if (decision.verdict.value != "approved" or decision.authorization_level.value != "L2"
+    if (decision.verdict.value != "approved" or decision.authorization_level is None
+            or decision.authorization_level.value != "L2"
             or compute_proposal_digest(proposal) != decision.proposal_digest
             or not verify(identity["kernel_public_key_hex"], canonical_decision_payload(decision),
                           decision.decision_signature or "")):

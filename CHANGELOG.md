@@ -5,13 +5,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-This file starts here. There are no tagged releases and no published packages
-before it: `0.1.0-alpha` was the version carried on `main` throughout that
-period. Everything below is the first set of changes recorded.
+Early entries recorded the initial untagged implementation. The repository
+subsequently published `v0.2.0-alpha`; the next candidate is `0.3.0a1`.
 
-## [Unreleased]
+## [0.3.0a1] — 2026-09-10
 
-### 0.3.0a1 release candidate — governed tool boundary
+### Governed tool boundary
 
 - Incorporated the existing signed-evidence work: kernel-side issuer verification
   binds entity identity, exact values and freshness; agent-written stamps do not

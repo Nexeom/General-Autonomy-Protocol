@@ -1,10 +1,10 @@
-# Preparing the 0.3.0a1 alpha release
+# Reproducing the 0.3.0a1 alpha artifacts
 
 The repository already has a published `v0.2.0-alpha` tag at commit `c33e403`.
-The candidate described here is **0.3.0a1**, with a proposed future tag
-`v0.3.0a1`. These instructions prepare and verify local artifacts. They do not
-create a tag, upload to a package index, or establish that this candidate has
-been released or independently audited.
+The version described here is **0.3.0a1**, using the tag name `v0.3.0a1`.
+Consult [GitHub releases](https://github.com/Nexeom/General-Autonomy-Protocol/releases)
+for published tags and assets. These instructions prepare and verify local
+artifacts; they do not create a tag, publish a package, or establish an audit.
 
 ## Build environment
 

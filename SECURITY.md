@@ -3,7 +3,7 @@
 ## Project status — read this first
 
 GAP is a **pre-release reference implementation**. `pyproject.toml` declares
-version `0.3.0a1` in this release candidate. The prior `v0.2.0-alpha` tag exists.
+version `0.3.0a1` in this alpha. The prior `v0.2.0-alpha` tag exists.
 No independent external security review has occurred. See the repository's
 release page for published tags and [docs/RELEASE.md](docs/RELEASE.md) for the
 reproducible build procedure.
@@ -65,8 +65,8 @@ A report is actionable when it contains:
 
 ## Supported versions
 
-There are no tagged releases and nothing is published to PyPI, so there is
-exactly one supported thing: the `main` branch.
+GitHub alpha tags identify historical snapshots. Security fixes land on `main`;
+there is no long-term support or backport promise for older alpha snapshots.
 
 | Version | Status | Receives security fixes |
 |---|---|---|
@@ -77,8 +77,8 @@ Supported runtime: **Python 3.11+**, per `requires-python` in `pyproject.toml`.
 CI runs the suite on 3.11, 3.12, and 3.13 on Linux and on 3.13 on Windows.
 Behavior outside that matrix is untested.
 
-Because there is no release channel, a security fix reaches you only when you
-pull `main`. If you are running GAP anywhere that matters, watch the repository.
+Monitor `main`, the changelog and GitHub releases for security fixes, and update
+your pinned deployment after reviewing the change. Tags do not update in place.
 
 ## Response targets
 

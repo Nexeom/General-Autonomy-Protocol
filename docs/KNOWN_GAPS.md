@@ -232,3 +232,10 @@ Independent deployment feedback remains needed.
 **P3. Published specifications with no implementation.**
 `GAP-AT-FIN-001 / SpendGate` is published under `action-types/` and has zero
 corresponding code.
+
+**P4. Advisory type and resource-lifecycle debt.** Type checking is not yet a
+release gate; existing embedded-runtime annotations still fail mypy. Python 3.13
+also reports unclosed SQLite connections in parts of the legacy test/runtime
+setup, alongside dependency deprecations. The reference gateway explicitly
+closes its stores, but repository-wide cleanup and a warning-free test baseline
+remain work. Passing CI does not imply these advisory checks are clean.
