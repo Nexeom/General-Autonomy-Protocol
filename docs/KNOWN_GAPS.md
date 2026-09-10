@@ -34,6 +34,16 @@ See [gateway recovery](GATEWAY.md#recovery-and-reauthorization) for the operator
 flow and limitations. These changes do not add an external audit witness,
 automatic evidence renewal or an exactly-once contract for arbitrary tools.
 
+The follow-up PR review reproduced three further defects in those changes.
+Receipt-persistence failure now records explicit uncertainty instead of an
+empty failure with a complete audit; recovery and restart cases are covered by
+`tests/test_gateway_receipt_recovery.py`. Embedded executor receipts use the
+same JSON normalization as execution results, preserving support for datetime,
+UUID and Decimal values without repeating completed actions; see
+`tests/test_executor_receipt_serialization.py`. Execution-ledger schema creation
+and migration now share one SQLite write transaction, with concurrent fresh
+startup, upgrade and rollback coverage in `tests/test_execution_migration_concurrency.py`.
+
 **September remediation:** failed retries now atomically persist `in_progress`
 before dispatch; the durable failure-then-concurrency regression proves a second
 claim is refused. Bulk property merges cannot restore the audit-only provenance

@@ -16,6 +16,8 @@ import json
 import time
 from typing import Callable, Dict, Optional
 
+from pydantic import TypeAdapter
+
 from gap_kernel._time import ensure_utc, utcnow
 from gap_kernel.crypto.signing import PublicKeyRegistry, verify as verify_signature
 from gap_kernel.governance.corrigibility import KillSwitch
@@ -89,6 +91,10 @@ class ReplayExecutionError(ExecutionError):
 # settles atomically with the execution it belongs to; it can never collide with a
 # real action key, which is always "<index>:<sha256>".
 _OOB_RESERVATION_KEY = "__oob_reservation__"
+
+# Match ExecutionResult's JSON serialization without restricting embedded
+# executors to JSON-native Python values (datetime, UUID and Decimal are valid).
+_RECEIPT_SERIALIZER = TypeAdapter(dict)
 
 
 def _action_idempotency_key(index: int, action: PlannedAction) -> str:
@@ -314,10 +320,46 @@ class ExecutionFabric:
                         "duration": 0.0,
                     })
                     raise
-                result = self._dispatch_action(action)
+                try:
+                    result = self._dispatch_action(action)
+                except BaseException as exc:
+                    # Termination can happen after an external effect but before
+                    # the executor returns. Propagate it after recording that the
+                    # current action's outcome needs reconciliation.
+                    failed.append({
+                        "action_type": action.action_type,
+                        "target": action.target,
+                        "success": False,
+                        "error": str(exc) or type(exc).__name__,
+                        "failure_stage": "dispatch",
+                        "outcome_unknown": True,
+                        "duration": 0.0,
+                    })
+                    raise
                 if result["success"]:
                     if row is not None:
-                        self._execution_ledger.record_action(row.nonce, key, result=result)
+                        try:
+                            receipt = _RECEIPT_SERIALIZER.dump_python(result, mode="json")
+                            self._execution_ledger.record_action(row.nonce, key, result=receipt)
+                        except BaseException as exc:
+                            # The tool already ran, but its durable completion
+                            # cannot be assumed. Keep this uncertainty in the
+                            # outcome journal instead of settling an empty failure.
+                            failed.append({
+                                "action_type": action.action_type,
+                                "target": action.target,
+                                "success": False,
+                                "error": str(exc) or type(exc).__name__,
+                                "failure_stage": "receipt_persistence",
+                                "outcome_unknown": True,
+                                "duration": result["duration"],
+                            })
+                            if isinstance(exc, Exception):
+                                raise ExecutionError(
+                                    "Tool returned successfully but its completion receipt "
+                                    "could not be persisted; outcome requires recovery."
+                                ) from exc
+                            raise
                     completed.append(result)
                     # Update world model with outcome
                     changes = self._apply_state_changes(action, result)
@@ -332,9 +374,12 @@ class ExecutionFabric:
                     world_state_changes=state_changes, executed_at=utcnow(),
                     execution_duration_seconds=round(time.monotonic() - start_time, 3),
                 )
+                interrupted_payload = interrupted.model_dump(mode="json")
+                if any(item.get("outcome_unknown") for item in failed):
+                    interrupted_payload["outcome_unknown"] = True
                 self._execution_ledger.finish(
                     row.nonce, success=False,
-                    result=interrupted.model_dump(mode="json"),
+                    result=interrupted_payload,
                     decision=governance_decision.model_dump(mode="json"),
                 )
             raise

@@ -120,45 +120,57 @@ class ExecutionLedger:
         self._init_schema()
 
     def _init_schema(self) -> None:
-        self._conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS executions (
-                nonce           TEXT PRIMARY KEY,
-                decision_id     TEXT NOT NULL,
-                proposal_id     TEXT NOT NULL,
-                status          TEXT NOT NULL,
-                attempts        INTEGER NOT NULL,
-                first_seen_at   TEXT NOT NULL,
-                last_attempt_at TEXT NOT NULL,
-                finished_at     TEXT
-            )
-            """
-        )
-        # Per-action completion keys make a resumed execution idempotent: an
-        # action that already succeeded is not dispatched again under the same
-        # authorization, so a partial-failure retry cannot repeat side effects.
-        self._conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS execution_actions (
-                nonce        TEXT NOT NULL,
-                action_key   TEXT NOT NULL,
-                completed_at TEXT NOT NULL,
-                PRIMARY KEY (nonce, action_key)
-            )
-            """
-        )
-        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(execution_actions)")}
-        if "result_json" not in columns:
-            self._conn.execute("ALTER TABLE execution_actions ADD COLUMN result_json TEXT")
-        self._conn.execute("""CREATE TABLE IF NOT EXISTS execution_contexts (
-            nonce TEXT PRIMARY KEY, context_json TEXT NOT NULL)""")
-        self._conn.execute("""CREATE TABLE IF NOT EXISTS execution_outcomes (
-            nonce TEXT NOT NULL, attempt INTEGER NOT NULL,
-            result_json TEXT NOT NULL, decision_json TEXT NOT NULL,
-            PRIMARY KEY (nonce, attempt))""")
-        self._conn.execute("""CREATE TABLE IF NOT EXISTS execution_attempts (
-            nonce TEXT NOT NULL, attempt INTEGER NOT NULL, decision_json TEXT NOT NULL,
-            PRIMARY KEY (nonce, attempt))""")
+        # Every instance, including a different process, must acquire the same
+        # SQLite write lock before inspecting or changing the shared schema.
+        # Otherwise two old-schema readers can both try to add result_json.
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS executions (
+                        nonce           TEXT PRIMARY KEY,
+                        decision_id     TEXT NOT NULL,
+                        proposal_id     TEXT NOT NULL,
+                        status          TEXT NOT NULL,
+                        attempts        INTEGER NOT NULL,
+                        first_seen_at   TEXT NOT NULL,
+                        last_attempt_at TEXT NOT NULL,
+                        finished_at     TEXT
+                    )
+                    """
+                )
+                # Per-action completion keys make a resumed execution idempotent:
+                # a recorded action is not dispatched again under this authority.
+                self._conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS execution_actions (
+                        nonce        TEXT NOT NULL,
+                        action_key   TEXT NOT NULL,
+                        completed_at TEXT NOT NULL,
+                        result_json  TEXT,
+                        PRIMARY KEY (nonce, action_key)
+                    )
+                    """
+                )
+                columns = {row["name"] for row in self._conn.execute(
+                    "PRAGMA table_info(execution_actions)")}
+                if "result_json" not in columns:
+                    self._conn.execute("ALTER TABLE execution_actions ADD COLUMN result_json TEXT")
+                self._conn.execute("""CREATE TABLE IF NOT EXISTS execution_contexts (
+                    nonce TEXT PRIMARY KEY, context_json TEXT NOT NULL)""")
+                self._conn.execute("""CREATE TABLE IF NOT EXISTS execution_outcomes (
+                    nonce TEXT NOT NULL, attempt INTEGER NOT NULL,
+                    result_json TEXT NOT NULL, decision_json TEXT NOT NULL,
+                    PRIMARY KEY (nonce, attempt))""")
+                self._conn.execute("""CREATE TABLE IF NOT EXISTS execution_attempts (
+                    nonce TEXT NOT NULL, attempt INTEGER NOT NULL, decision_json TEXT NOT NULL,
+                    PRIMARY KEY (nonce, attempt))""")
+                self._conn.execute("COMMIT")
+            except BaseException:
+                if self._conn.in_transaction:
+                    self._conn.execute("ROLLBACK")
+                raise
 
     # --- state machine ------------------------------------------------------
 

@@ -220,6 +220,14 @@ attempt, or an older completed ledger that lacks both an outcome journal and
 stored result, reports `recovery_required` rather than inventing receipts.
 When recoverable attempt authority is available, interruption is recorded as an
 unknown outcome with its original decision and known completed receipts.
+If a tool returns successfully but its completion receipt cannot be saved, the
+attempt records `failure_stage: receipt_persistence` and `outcome_unknown: true`.
+The request remains `interrupted` with `audit_status: recovery_required`, and
+audit completeness remains false across restart. After restoring storage, retry
+the same request with valid authority and the tool's original idempotency key;
+successful recovery resolves the current uncertainty while retaining the failed
+attempt in history. Tools without an idempotency contract need reconciliation
+before retrying an uncertain effect.
 
 The audit endpoint's `valid` checks the signed chain. Its separate `complete`
 field reports whether known settled outcomes have been delivered and no legacy
