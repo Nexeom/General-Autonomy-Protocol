@@ -52,8 +52,8 @@ jobs:
       - name: Install as documented
         run: pip install -e ".[dev]"
 
-      - name: Run the suite as documented
-        run: pytest tests/ -v
+      - name: Run governed quickstart
+        run: python examples/governed_demo.py
 
   lint:
     name: lint & types
@@ -72,8 +72,27 @@ jobs:
           pip install ruff mypy
 
       - name: Ruff
-        run: ruff check gap_kernel/ tests/
+        run: ruff check gap_kernel/ tests/ examples/ tools/
 
       - name: Mypy
         run: mypy gap_kernel/ --ignore-missing-imports
         continue-on-error: true
+
+  release-build:
+    name: Reproducible alpha artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install hash-locked build tools
+        run: python -m pip install --require-hashes -r requirements/build-py312.txt
+      - name: Build twice and verify
+        run: |
+          python tools/build_release.py --output-dir "$RUNNER_TEMP/gap-release"
+          python tools/build_release.py --verify "$RUNNER_TEMP/gap-release"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reproducible-alpha
+          path: ${{ runner.temp }}/gap-release/

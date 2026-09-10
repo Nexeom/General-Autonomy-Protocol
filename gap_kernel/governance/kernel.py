@@ -16,6 +16,7 @@ Behavioral Contract:
 - Enforces Separation of Creation and Validation for governed outputs
 """
 
+import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from uuid import uuid4
@@ -50,7 +51,9 @@ from gap_kernel.models.intent import (
 )
 from gap_kernel.models.strategy import StrategyProposal, compute_proposal_digest
 from gap_kernel.models.world import WorldModel
-from gap_kernel.world_model.store import evidence_is_attested
+from gap_kernel.world_model.attestation import EvidenceVerifier
+
+logger = logging.getLogger("gap_kernel.governance")
 
 
 # ---------------------------------------------------------------------------
@@ -96,10 +99,19 @@ _BASELINE_ACTION_TYPES: Dict[str, ActionTypeSpec] = {
 # ---------------------------------------------------------------------------
 
 def _is_constraint_active(constraint: Constraint, current_time: datetime) -> bool:
-    """Determine if a constraint is active based on temporal authority."""
+    """Determine temporal activation, conservatively retaining unknown gates.
+
+    Runtime condition expressions are not implemented. Any supplied condition
+    keeps the policy active, even alongside a nonmatching schedule: an unknown
+    condition must never silently remove a HARD constraint. The string is not
+    evaluated, and this fallback does not claim to implement its meaning.
+    """
     activation = constraint.activation
 
     if activation.always:
+        return True
+
+    if activation.condition is not None:
         return True
 
     if activation.schedule:
@@ -135,7 +147,7 @@ def _check_constraint_violation(
     constraint: Constraint,
     world_state: WorldModel,
     allow_untracked_targets: bool = True,
-    require_attested_evidence: bool = False,
+    evidence_verifier: Optional[EvidenceVerifier] = None,
 ) -> bool:
     """
     Check if a proposal violates a constraint.
@@ -143,9 +155,10 @@ def _check_constraint_violation(
     Uses a rule-based evaluation engine that maps constraint names to
     concrete checks. This is the extensible policy evaluation core.
 
-    ``allow_untracked_targets`` and ``require_attested_evidence`` are threaded to
-    every evaluator so the world-model-backed ones share one posture; see
-    ``GovernanceKernel``.
+    ``allow_untracked_targets`` and ``evidence_verifier`` are threaded to every
+    evaluator so the world-model-backed ones share one posture; see
+    ``GovernanceKernel``. An ``evidence_verifier`` of ``None`` is the open
+    posture — unsigned world-model facts are ruled on as supplied.
     """
     check_fn = _CONSTRAINT_EVALUATORS.get(constraint.name)
     if check_fn:
@@ -154,7 +167,7 @@ def _check_constraint_violation(
             constraint,
             world_state,
             allow_untracked_targets,
-            require_attested_evidence,
+            evidence_verifier,
         )
 
     # Fail-closed (SA-2 / Fix 1): a constraint with no registered evaluator
@@ -172,7 +185,7 @@ def _check_gdpr_consent(
     constraint: Constraint,
     world_state: WorldModel,
     allow_untracked_targets: bool = True,
-    require_attested_evidence: bool = False,
+    evidence_verifier: Optional[EvidenceVerifier] = None,
 ) -> bool:
     """Check if proposal involves contacting an entity without GDPR consent.
 
@@ -181,19 +194,21 @@ def _check_gdpr_consent(
     carry — or carries without a jurisdiction — is a violation: the gate has
     nothing to evaluate, and an unevaluable HARD constraint must not pass.
 
-    Under ``require_attested_evidence`` the facts themselves must be evaluable
-    too. Both the jurisdiction that decides whether the gate applies and the
-    consent that satisfies it are read off the world model, so an unattested
-    value is a fact with no source — the gate cannot be certified either way, and
-    that is a violation on the same footing as a missing evaluator.
+    With an ``evidence_verifier`` the facts themselves must be evaluable too.
+    Both the jurisdiction that decides whether the gate applies and the consent
+    that satisfies it are read off the world model, so a value with no valid
+    attestation behind it is a fact with no source — the gate cannot be certified
+    either way, and that is a violation on the same footing as a missing
+    evaluator. The verifier is the kernel's own; nothing here reads a claim off
+    the entity.
     """
     for action in proposal.actions:
-        if action.action_type in ("send_email", "send_sms", "direct_call", "automated_outreach"):
+        if _is_interactive(action):
             target_id = action.target
             entity = world_state.entities.get(target_id)
             if entity:
                 props = entity.properties
-                if require_attested_evidence and not evidence_is_attested(
+                if evidence_verifier is not None and not evidence_verifier.attests(
                     entity, _jurisdiction_key(props)
                 ):
                     return True
@@ -207,7 +222,7 @@ def _check_gdpr_consent(
                     "MT", "LU",
                 )
                 if is_eu:
-                    if require_attested_evidence and not evidence_is_attested(
+                    if evidence_verifier is not None and not evidence_verifier.attests(
                         entity, "gdpr_consent"
                     ):
                         return True
@@ -226,22 +241,23 @@ def _check_contact_hours(
     constraint: Constraint,
     world_state: WorldModel,
     allow_untracked_targets: bool = True,
-    require_attested_evidence: bool = False,
+    evidence_verifier: Optional[EvidenceVerifier] = None,
 ) -> bool:
     """Check if proposal involves contacting an entity outside allowed hours.
 
     Same posture as the GDPR gate: when ``allow_untracked_targets`` is False, an
     absent target — or one carrying no ``local_hour`` — leaves the window
     unknowable, which is a violation rather than a pass. Under
-    ``require_attested_evidence`` an unattested ``local_hour`` is equally
-    unknowable: nothing vouches for the number the window is read from.
+    an ``evidence_verifier`` a ``local_hour`` with no valid attestation is
+    equally unknowable: nothing the kernel can check vouches for the number the
+    window is read from.
     """
     for action in proposal.actions:
-        if action.action_type in ("send_email", "send_sms", "direct_call", "automated_outreach"):
+        if _is_interactive(action):
             target_id = action.target
             entity = world_state.entities.get(target_id)
             if entity:
-                if require_attested_evidence and not evidence_is_attested(
+                if evidence_verifier is not None and not evidence_verifier.attests(
                     entity, "local_hour"
                 ):
                     return True
@@ -261,7 +277,7 @@ def _check_cost_ceiling(
     constraint: Constraint,
     world_state: WorldModel,
     allow_untracked_targets: bool = True,
-    require_attested_evidence: bool = False,
+    evidence_verifier: Optional[EvidenceVerifier] = None,
 ) -> bool:
     """Check if proposal's estimated cost exceeds the ceiling.
 
@@ -277,9 +293,39 @@ def _check_cost_ceiling(
     return proposal.estimated_cost > ceiling
 
 
+# Actions that put the system in contact with a person. The GDPR and
+# contact-hours gates turn on this classification, so a type that escapes it
+# escapes the gate entirely.
 _INTERACTIVE_ACTIONS = frozenset(
     {"send_email", "send_sms", "direct_call", "automated_outreach"}
 )
+
+# Types known NOT to reach a person. Everything outside both sets is unknown,
+# and an unknown type is treated as contact: the classification is an input to a
+# HARD constraint, so guessing "not contact" is a silent bypass — an action type
+# of "email" or "outreach" is not on the interactive list and used to sail past
+# a gate that "send_email" fails.
+_NON_INTERACTIVE_ACTIONS = frozenset(
+    {
+        "query_crm",
+        "update_record",
+        "route_to_human",
+        "escalate",
+        "no_op",
+        "read_record",
+        "log_event",
+        "skill_modification",
+        "policy_proposal",
+    }
+)
+
+
+def _is_interactive(action) -> bool:
+    """Whether an action reaches a person, failing closed on an unknown type."""
+    action_type = (action.action_type or "").strip().lower()
+    if action_type in _NON_INTERACTIVE_ACTIONS:
+        return False
+    return True
 
 
 def _check_ai_interaction_disclosure(
@@ -287,7 +333,7 @@ def _check_ai_interaction_disclosure(
     constraint: Constraint,
     world_state: WorldModel,
     allow_untracked_targets: bool = True,
-    require_attested_evidence: bool = False,
+    evidence_verifier: Optional[EvidenceVerifier] = None,
 ) -> bool:
     """Transparency (Category 3): an action that interacts directly with an
     individual must disclose it is an AI system. An interactive action without
@@ -304,7 +350,7 @@ def _check_fairness_evaluation(
     constraint: Constraint,
     world_state: WorldModel,
     allow_untracked_targets: bool = True,
-    require_attested_evidence: bool = False,
+    evidence_verifier: Optional[EvidenceVerifier] = None,
 ) -> bool:
     """Anti-Discrimination (Category 4): a consequential decision affecting an
     individual must carry a Fairness Evaluation. An action flagged
@@ -322,7 +368,7 @@ def _check_aml_screening(
     constraint: Constraint,
     world_state: WorldModel,
     allow_untracked_targets: bool = True,
-    require_attested_evidence: bool = False,
+    evidence_verifier: Optional[EvidenceVerifier] = None,
 ) -> bool:
     """Financial (Category 5): a financial transaction above the constraint's
     ``threshold`` (default 0 — screen everything) must carry AML screening AND a
@@ -352,7 +398,7 @@ def _check_minimum_necessary_phi(
     constraint: Constraint,
     world_state: WorldModel,
     allow_untracked_targets: bool = True,
-    require_attested_evidence: bool = False,
+    evidence_verifier: Optional[EvidenceVerifier] = None,
 ) -> bool:
     """Healthcare (Category 6): PHI access must be the minimum necessary. A bulk
     PHI access (``scope == "bulk"`` or ``record_count`` over the constraint's
@@ -381,7 +427,7 @@ def _check_safety_boundary(
     constraint: Constraint,
     world_state: WorldModel,
     allow_untracked_targets: bool = True,
-    require_attested_evidence: bool = False,
+    evidence_verifier: Optional[EvidenceVerifier] = None,
 ) -> bool:
     """Safety (Category 7): a safety-critical action must affirmatively be within
     its hard safety boundary. A ``safety_critical`` action that is not declared
@@ -399,7 +445,7 @@ def _check_ip_content_risk(
     constraint: Constraint,
     world_state: WorldModel,
     allow_untracked_targets: bool = True,
-    require_attested_evidence: bool = False,
+    evidence_verifier: Optional[EvidenceVerifier] = None,
 ) -> bool:
     """IP / Content (Category 8): a content-generating action must carry an IP-risk
     assessment, and high-risk output (substantial copyright similarity, third-party
@@ -459,18 +505,18 @@ def _format_human_reason(
     violations: List[str],
     proposal: StrategyProposal,
     world_state: WorldModel,
-    require_attested_evidence: bool = False,
+    evidence_verifier: Optional[EvidenceVerifier] = None,
 ) -> str:
     """Create a human-readable rejection explanation."""
     parts = []
     for v in violations:
         if v == "gdpr_consent_required":
             targets = [a.target for a in proposal.actions
-                       if a.action_type in ("send_email", "send_sms", "direct_call", "automated_outreach")]
+                       if _is_interactive(a)]
             for target in targets:
                 entity = world_state.entities.get(target)
                 if entity:
-                    unattested = _unattested_evidence(entity, require_attested_evidence)
+                    unattested = _unattested_evidence(entity, evidence_verifier)
                     if unattested:
                         parts.append(
                             f"Entity {target} carries no attested provenance for "
@@ -491,15 +537,17 @@ def _format_human_reason(
     return " ".join(parts) if parts else "One or more constraints were violated."
 
 
-def _unattested_evidence(entity, require_attested_evidence: bool) -> List[str]:
-    """The governance-relevant keys on ``entity`` the consent gate reads without
-    attested provenance behind them. Empty when attestation is not required."""
-    if not require_attested_evidence:
+def _unattested_evidence(
+    entity, evidence_verifier: Optional[EvidenceVerifier]
+) -> List[str]:
+    """The governance-relevant keys the consent gate reads that ``evidence_verifier``
+    will not accept. Empty in the open posture, where nothing is verified."""
+    if evidence_verifier is None:
         return []
     return [
         key
         for key in (_jurisdiction_key(entity.properties), "gdpr_consent")
-        if not evidence_is_attested(entity, key)
+        if not evidence_verifier.attests(entity, key)
     ]
 
 
@@ -787,8 +835,21 @@ class GovernanceKernel:
     A governed kernel owns the three inputs an agent would otherwise author into
     the evaluation: the clock (``_resolve_time``), whether a world-model-backed
     gate may pass on an untracked target (``allow_untracked_targets``), and
-    whether a world-model fact with no attested source counts as evidence
-    (``require_attested_evidence``).
+    whether a world-model fact counts as evidence — which it decides by VERIFYING
+    a signature with its own :class:`EvidenceVerifier`, built from issuer keys it
+    resolved itself, rather than by reading a claim off the entity.
+
+    That last one hardens exactly TWO of the nine registered evaluators —
+    ``_check_gdpr_consent`` and ``_check_contact_hours``, the only two that read
+    the world model. The other seven rule on agent-authored ``action.parameters``
+    or ``proposal.estimated_cost``, which nothing attests. Five of those seven
+    are gated by a flag the agent chooses to set, so omitting it skips the check
+    entirely: omit ``safety_critical`` and the physical-safety gate never runs,
+    omit ``transaction_amount`` and AML screening never runs. The remaining two
+    do fail closed on omission — ``ai_interaction_disclosure`` reads
+    ``parameters.get("ai_disclosed", False)`` and ``cost_ceiling`` reads a
+    ``estimated_cost`` that is always present — but they still rule on a number
+    the agent wrote.
     """
 
     def __init__(
@@ -803,6 +864,7 @@ class GovernanceKernel:
         governed: bool = False,
         allow_untracked_targets: Optional[bool] = None,
         require_attested_evidence: Optional[bool] = None,
+        evidence_issuers: Optional[PublicKeyRegistry] = None,
         decision_ttl_seconds: int = _DEFAULT_DECISION_TTL_SECONDS,
     ):
         # Governed mode fails closed: it REQUIRES the industry-specific regulatory
@@ -840,15 +902,33 @@ class GovernanceKernel:
         # The world model is EVIDENCE, not telemetry: the world-model-backed gates
         # rule on a target's jurisdiction, consent and local hour, so whatever can
         # write those facts decides the verdict. Governed mode therefore requires
-        # them to carry attested provenance (see gap_kernel.world_model.store) and
-        # treats an unattested value as unevaluable — a violation, exactly like a
-        # constraint with no registered evaluator. Open/prototype mode keeps the
-        # permissive behavior; either posture can be set explicitly.
+        # a SIGNED attestation over those values, verified here against issuer
+        # keys this kernel resolved (from its trust root in the deployed posture).
+        # A value the kernel cannot verify is unevaluable — a violation, exactly
+        # like a constraint with no registered evaluator. Open/prototype mode
+        # keeps the permissive behavior; either posture can be set explicitly.
         self._require_attested_evidence = (
             self._governed
             if require_attested_evidence is None
             else require_attested_evidence
         )
+        # None is the OPEN posture and is not the same thing as an empty registry.
+        # A governed kernel with no issuers still gets a verifier — one that can
+        # verify nothing and therefore rejects everything, which is the
+        # fail-closed answer rather than a silent downgrade to open.
+        self._evidence_verifier: Optional[EvidenceVerifier] = None
+        if self._require_attested_evidence:
+            self._evidence_verifier = EvidenceVerifier(
+                evidence_issuers or PublicKeyRegistry()
+            )
+            if evidence_issuers is None:
+                logger.warning(
+                    "governed kernel has no evidence issuers; every "
+                    "world-model-backed constraint will be unevaluable and "
+                    "therefore violated. Supply evidence_issuers, or provision a "
+                    "trust root carrying an 'evidence_issuers' map. This is "
+                    "fail-closed behaviour, not a misconfiguration crash."
+                )
         self._action_type_registry: Dict[str, ActionTypeSpec] = dict(_BASELINE_ACTION_TYPES)
         self._dynamic_risk_engine = DynamicRiskEngine(
             escalation_config or EscalationConfig()
@@ -1015,7 +1095,7 @@ class GovernanceKernel:
             if constraint.type == ConstraintType.HARD:
                 if _check_constraint_violation(
                     proposal, constraint, world_state,
-                    self._allow_untracked_targets, self._require_attested_evidence,
+                    self._allow_untracked_targets, self._evidence_verifier,
                 ):
                     hard_violations.append(constraint.name)
 
@@ -1028,7 +1108,7 @@ class GovernanceKernel:
                 rejection_reason=_format_structured_reason(hard_violations),
                 rejection_detail=_format_human_reason(
                     hard_violations, proposal, world_state,
-                    self._require_attested_evidence,
+                    self._evidence_verifier,
                 ),
                 evaluated_at=current_time,
             )
@@ -1237,7 +1317,7 @@ class GovernanceKernel:
             if constraint.type == ConstraintType.HARD:
                 if _check_constraint_violation(
                     proposal, constraint, world_state,
-                    self._allow_untracked_targets, self._require_attested_evidence,
+                    self._allow_untracked_targets, self._evidence_verifier,
                 ):
                     hard_violations.append(constraint.name)
 
@@ -1249,7 +1329,7 @@ class GovernanceKernel:
             if constraint.type == ConstraintType.SOFT:
                 if _constraint_has_evaluator(constraint) and _check_constraint_violation(
                     proposal, constraint, world_state,
-                    self._allow_untracked_targets, self._require_attested_evidence,
+                    self._allow_untracked_targets, self._evidence_verifier,
                 ):
                     soft_violations.append(constraint.name)
 
@@ -1268,7 +1348,7 @@ class GovernanceKernel:
                 rejection_reason=_format_structured_reason(hard_violations),
                 rejection_detail=_format_human_reason(
                     hard_violations, proposal, world_state,
-                    self._require_attested_evidence,
+                    self._evidence_verifier,
                 ),
                 temporal_context=_get_temporal_snapshot(current_time),
                 policy_snapshot=_serialize_active_policies(active_constraints),

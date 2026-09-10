@@ -3,15 +3,18 @@
 ## Project status — read this first
 
 GAP is a **pre-release reference implementation**. `pyproject.toml` declares
-version `0.2.0-alpha`. There are no tagged releases, no published packages, and
-no external security review. The repository has one author.
+version `0.3.0a1` in this alpha. The prior `v0.2.0-alpha` tag exists.
+No independent external security review has occurred. See the repository's
+release page for published tags and [docs/RELEASE.md](docs/RELEASE.md) for the
+reproducible build procedure.
 
 The governance kernel enforces real controls — kernel-signed decisions,
 single-use authorizations, a signed regulatory floor, a fail-closed evaluator —
 and those controls are adversarially tested. It also has a documented boundary
-it does not cross: **an adversary with code execution inside the agent process
-bypasses enforcement without forging anything.** That is not a bug report; it is
-the current architecture, described in
+it does not cross in embedded mode: **an adversary with code execution beside
+the execution fabric bypasses enforcement without forging anything.** The
+separately deployed two-tool gateway changes this topology only under the
+container/OS assumptions in [docs/GATEWAY.md](docs/GATEWAY.md). See
 [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
 
 Do not deploy GAP as the sole control on a system that can cause harm. Read
@@ -62,20 +65,20 @@ A report is actionable when it contains:
 
 ## Supported versions
 
-There are no tagged releases and nothing is published to PyPI, so there is
-exactly one supported thing: the `main` branch.
+GitHub alpha tags identify historical snapshots. Security fixes land on `main`;
+there is no long-term support or backport promise for older alpha snapshots.
 
 | Version | Status | Receives security fixes |
 |---|---|---|
-| `main` (currently `0.2.0-alpha`) | Active development; the only supported target | Yes — fixes land here |
+| Latest development branch / alpha | Active development; no production support promise | Yes — fixes land here |
 | Any fork, vendored copy, or checkout of an older commit | Unsupported | No — rebase onto `main` |
 
 Supported runtime: **Python 3.11+**, per `requires-python` in `pyproject.toml`.
 CI runs the suite on 3.11, 3.12, and 3.13 on Linux and on 3.13 on Windows.
 Behavior outside that matrix is untested.
 
-Because there is no release channel, a security fix reaches you only when you
-pull `main`. If you are running GAP anywhere that matters, watch the repository.
+Monitor `main`, the changelog and GitHub releases for security fixes, and update
+your pinned deployment after reviewing the change. Tags do not update in place.
 
 ## Response targets
 
@@ -109,8 +112,9 @@ A working demonstration of any of the following, against the governed postures:
   trust root does not name, or to accept a tampered profile.
 - Causing a HARD constraint or a Tier-1 regulatory-floor constraint to evaluate
   as satisfied when it is not, using only data an integrator or a caller can
-  supply — an unattested world-model value treated as evidence, a constraint
-  silently dropped, a threshold lost in transit.
+  supply — a forged or replayed evidence attestation, an unsigned world-model
+  value treated as evidence, a constraint silently dropped, a threshold lost in
+  transit.
 - Registering or altering an action type at runtime against a governed kernel,
   or reaching the Action Type Registry through the RPC or HTTP surface.
 - Input across the subprocess RPC boundary that crashes or hangs the kernel,

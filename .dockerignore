@@ -1,0 +1,14 @@
+.git
+.gap-demo*
+.gap-runs
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.hypothesis
+.mypy_cache
+.ruff_cache
+.coverage
+*.egg-info
+dist
+build
+.env

@@ -12,3 +12,10 @@ build/
 .coverage
 htmlcov/
 .hypothesis/
+.gap-demo*/
+.gap-runs/
+.mypy_cache/
+.ruff_cache/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

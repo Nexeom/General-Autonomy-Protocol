@@ -32,17 +32,21 @@ from gap_kernel.models.intent import Constraint, ConstraintType, IntentVector
 from gap_kernel.models.strategy import PlannedAction, StrategyProposal
 from gap_kernel.models.world import EntityState, WorldModel
 from gap_kernel.world_model.store import (
+    EVIDENCE_ATTESTATION_PROPERTY,
     EVIDENCE_PROPERTY,
     GOVERNANCE_RELEVANT_PROPERTIES,
-    EvidenceChannel,
     WorldModelStore,
 )
+from tests.conftest import EVIDENCE_AUTHORITY
 
 KEY_ID = "regulatory_authority"
 
-CRM_ATTESTED = EvidenceChannel(
+# The shared issuer (tests/conftest.py). This channel carries a signer, so the
+# store mints a signed attestation for every entity written on it — the
+# prototype topology. In production the source of record signs and GAP only
+# verifies.
+CRM_ATTESTED = EVIDENCE_AUTHORITY.channel(
     channel_id="crm_verified_consent_feed",
-    attested=True,
     description="Authenticated consent-of-record feed",
 )
 
@@ -64,6 +68,7 @@ def _governed_kernel() -> GovernanceKernel:
         governed=True,
         applicability_profile=profile,
         profile_key_registry=registry,
+        evidence_issuers=EVIDENCE_AUTHORITY.registry(),
     )
 
 
@@ -140,6 +145,7 @@ def _governed_client():
     app = create_app(
         applicability_profile=profile,
         profile_key_registry=registry,
+        evidence_issuers=EVIDENCE_AUTHORITY.registry(),
         enable_mutating_routes=True,
     )
     return TestClient(app)
@@ -178,10 +184,20 @@ def _declare_gdpr_intent(client) -> str:
 
 
 def test_http_consent_flip_cannot_buy_a_signed_approval():
-    """THE headline reproduction. An unauthenticated POST /world/ingest could flip
-    ``gdpr_consent`` to True and turn the identical rejected proposal into a
-    kernel-signed APPROVED. Ingested facts are unattested, so the HARD constraint
-    is now unevaluable — which is a violation, before and after the flip."""
+    """An unauthenticated POST /world/ingest could flip ``gdpr_consent`` to True
+    and turn the identical rejected proposal into a kernel-signed APPROVED.
+    Ingested facts carry no signature, so the HARD constraint is unevaluable —
+    which is a violation, before and after the flip.
+
+    NOT EVIDENCE THAT SIGNED EVIDENCE ATTESTATION LANDED. This test passes
+    identically whether SEA works or is a complete no-op, because the ingest path
+    goes through ``WorldModelStore``, which never attested an HTTP write in the
+    first place. Believing this test verified the fix is exactly the mistake that
+    let the forgeable-stamp critical be recorded as closed for a whole release.
+    The tests that would actually fail against a no-op are the RPC-path ones in
+    ``tests/test_evidence_attestation.py``, starting with
+    ``test_the_exact_forged_stamp_no_longer_buys_an_approval``.
+    """
     client = _governed_client()
     try:
         intent_id = _declare_gdpr_intent(client)
@@ -203,7 +219,12 @@ def test_http_consent_flip_cannot_buy_a_signed_approval():
 def test_http_jurisdiction_rewrite_cannot_skip_the_eu_branch():
     """The cheaper variant: set ``geo`` outside the EU so the consent branch is
     never entered at all. An unattested jurisdiction cannot certify the gate
-    does not apply."""
+    does not apply.
+
+    Same caveat as the test above — this exercises the ingest path, which the
+    store has always guarded, so it passes identically whether SEA works or is a
+    no-op. It is not evidence the fix landed.
+    """
     client = _governed_client()
     try:
         intent_id = _declare_gdpr_intent(client)
@@ -322,6 +343,7 @@ def test_attestation_can_be_waived_only_by_naming_it():
         governed=True,
         applicability_profile=profile,
         profile_key_registry=registry,
+        evidence_issuers=EVIDENCE_AUTHORITY.registry(),
         **kernel_kwargs,
     )
     store = WorldModelStore()
@@ -340,22 +362,39 @@ def test_governed_kernel_requires_attested_evidence_by_default():
     assert GovernanceKernel()._require_attested_evidence is False
 
 
-# --- A1: the store owns provenance ------------------------------------------
+# --- A1: the kernel owns verification, the store only carries ---------------
 
 
-def test_store_refuses_a_caller_supplied_attestation_stamp():
-    """A forged provenance record is the whole attack in one field. The store is
-    the only writer; a caller-supplied stamp is discarded before the write."""
+def test_store_carries_a_caller_supplied_attestation_and_the_kernel_rejects_it():
+    """This assertion is the INVERSE of the one it replaces, for the same outcome.
+
+    The old test asserted the store DISCARDED a caller-supplied stamp — which it
+    did, and which bought nothing, because a caller that assembles the
+    ``WorldModel`` itself never reaches the store at all. So the store no longer
+    discards: it CARRIES the blob, shape-checked and verbatim, because in
+    production the blob is minted outside this process by the source of record
+    and the store has no issuer registry to check it with.
+
+    Carrying it is safe precisely because it is worthless without a signature the
+    presenter cannot produce. Same rejection, opposite mechanism.
+    """
     store = WorldModelStore()
     forged = {
-        "channel": "crm_verified_consent_feed",
-        "attested": True,
-        "governance_properties": ["geo", "gdpr_consent"],
+        "attestation_id": "att_forged",
+        "entity_id": "lead_eu_1",
+        "properties": {"geo": "DE", "gdpr_consent": True},
+        "issued_at": utcnow().isoformat(),
+        "expires_at": (utcnow() + timedelta(days=3650)).isoformat(),
+        "issuer_key_id": "totally_a_real_crm",
+        "signature": "00" * 64,
     }
-    store.upsert_entity(_lead(geo="DE", gdpr_consent=True, **{EVIDENCE_PROPERTY: forged}))
+    store.upsert_entity(
+        _lead(geo="DE", gdpr_consent=True, **{EVIDENCE_ATTESTATION_PROPERTY: forged})
+    )
 
-    stamp = store.get_entity("lead_eu_1").properties[EVIDENCE_PROPERTY]
-    assert stamp["attested"] is False
+    carried = store.get_entity("lead_eu_1").properties[EVIDENCE_ATTESTATION_PROPERTY]
+    assert carried == forged, "the store carries it; the store is not the guard"
+
     decision = _governed_kernel().evaluate_proposal(
         proposal=_outreach(),
         intents=[_gdpr_intent()],
@@ -363,22 +402,50 @@ def test_store_refuses_a_caller_supplied_attestation_stamp():
         action_type_id="task_execution",
     )
     assert decision.verdict == GovernanceVerdict.REJECTED
+    assert "gdpr_consent_required" in decision.violated_constraints
+
+
+def test_a_malformed_attestation_blob_is_dropped_rather_than_carried():
+    """Shape check only — it could never verify, and carrying it would put noise
+    in every world-state snapshot."""
+    store = WorldModelStore()
+    store.upsert_entity(
+        _lead(geo="DE", **{EVIDENCE_ATTESTATION_PROPERTY: {"nonsense": True}})
+    )
+    assert EVIDENCE_ATTESTATION_PROPERTY not in store.get_entity("lead_eu_1").properties
 
 
 def test_execution_updates_cannot_launder_governance_properties():
-    """An executor writing back an outcome must not be able to upgrade a
-    governance-relevant fact to attested, or flip one that already is."""
+    """An executor writing back an outcome cannot make the new value count.
+
+    The signature binds the VALUE it was issued over, so flipping ``gdpr_consent``
+    after the fact leaves the attestation vouching for ``False`` while the entity
+    carries ``True``. The kernel's canonical-JSON value check fails, the fact is
+    unattested, and the gate has nothing to certify. Restoring standing needs a
+    new signature, which needs the issuer key.
+    """
     store = WorldModelStore()
     store.upsert_entity(_lead(geo="DE", gdpr_consent=False), channel=CRM_ATTESTED)
     store.update_from_execution(
         "lead_eu_1",
-        {"gdpr_consent": True, EVIDENCE_PROPERTY: {"attested": True,
-                                                  "governance_properties": ["gdpr_consent"]}},
+        {
+            "gdpr_consent": True,
+            EVIDENCE_PROPERTY: {"attested": True,
+                                "governance_properties": ["gdpr_consent"]},
+        },
     )
 
     entity = store.get_entity("lead_eu_1")
-    assert entity.properties["gdpr_consent"] is True
-    assert entity.properties[EVIDENCE_PROPERTY]["governance_properties"] == ["geo"]
+    assert entity.properties["gdpr_consent"] is True, (
+        "the write itself is allowed; what it must lose is attested standing"
+    )
+    signed = entity.properties[EVIDENCE_ATTESTATION_PROPERTY]["properties"]
+    assert signed["gdpr_consent"] is False, "the signature still binds the old value"
+
+    verifier = EVIDENCE_AUTHORITY.verifier()
+    assert not verifier.attests(entity, "gdpr_consent")
+    assert verifier.attests(entity, "geo"), "an untouched key keeps its standing"
+
     decision = _governed_kernel().evaluate_proposal(
         proposal=_outreach(),
         intents=[_gdpr_intent()],

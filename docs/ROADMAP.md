@@ -1,85 +1,77 @@
-# GAP Roadmap, Business Model & Positioning
+# GAP roadmap and positioning
 
-> **Non-normative.** Nothing in this document is a protocol requirement. It
-> states intent and commercial context for the project, not conformance
-> obligations. The normative standard is
-> [`PROTOCOL_SPECIFICATION.md`](PROTOCOL_SPECIFICATION.md); what the reference
-> implementation actually enforces is
-> [`CONFORMANCE.md`](CONFORMANCE.md).
->
-> These three sections were previously embedded in the protocol specification
-> (as §8 Strategic Roadmap, §9 Business Model, §10 Competitive Position). They
-> are reproduced here unchanged. They were moved because a document that
-> organizations are asked to implement against should not also carry the
-> author's commercial plan — and because §9 designates an asset "Proprietary
-> Data" inside a document the project calls an open standard.
+This document states development priorities for an **open protocol proposal**.
+It is non-normative. Proposed requirements live in
+[PROTOCOL_SPECIFICATION.md](PROTOCOL_SPECIFICATION.md); implemented guarantees
+and their limits live in [CONFORMANCE.md](CONFORMANCE.md).
 
-## Status of this roadmap
+## Current evidence
 
-None of the phases below has shipped. As of this revision:
+The project has an alpha Python reference implementation, a test suite and
+maintainer-led reviews. The package version is `0.3.0a1` alpha; see
+[GitHub Releases](https://github.com/Nexeom/General-Autonomy-Protocol/releases)
+for versioned tags and artifacts, including `v0.2.0-alpha`. There is no published
+adoption report or external security review. This roadmap is not evidence of commercial traction,
+certification, third-party approval or a production deployment.
 
-- There is **no tagged release**. The package version is `0.2.0-alpha`.
-- There are **no known adopters** and no published implementation reports. The
-  "early adopters" in Phase 1 are a plan, not a population.
-- **No RGAP adapter exists** — for LangGraph or any other framework. RGAP is
-  specified (see the specification's RGAP section) and unimplemented.
-- The repository has **one author** and has had **no external security review**.
-  The audits in `docs/` are self-run; see their metadata blocks.
-- The **Constraint Library** named in the Business Model table below does not
-  exist in this repository. Everything published here — the protocol
-  specification and the reference kernel, including its constraint evaluators —
-  is Apache-2.0.
+A two-tool gateway, optional LangGraph adapter and runnable governed demo are
+implemented for the `0.3.0a1` alpha. The local demo passes ten functional checks using
+the same OS user and a scripted approver; it does not demonstrate deployment
+isolation. The [evaluation harness](EVALUATION.md) covers 26 deterministic
+scenarios and records revision, environment and denominators. The
+[Linux Docker run](https://github.com/Nexeom/General-Autonomy-Protocol/actions/runs/34496186876)
+passed all eight boundary checks for the documented topology, and the
+[CI validation run](https://github.com/Nexeom/General-Autonomy-Protocol/actions/runs/34496186894)
+passed 746 tests across Linux/Python 3.11–3.13 and reproducible-build checks;
+the Windows/Python 3.13 job also passed. These
+are project-run automated results, not independent deployment evidence. Code
+presence alone does not satisfy the milestones below. The current reviewer is
+the maintainer. No outside review request is implied by preparation of the
+[review package](REVIEW_GUIDE.md).
 
-Read the roadmap as a statement of direction. It is not evidence of traction.
+## Development milestones
 
----
+Progress is gated by evidence rather than promised calendar dates.
 
-## Strategic Roadmap
-
-**Phase 1: Protocol Establishment (Now)**
-- Ship GAP as an open-source protocol standard
-- Publish the General Autonomy manifesto to establish the category
-- Position Nexeom as the first GAP-native Decision Intelligence platform
-- Begin capturing Decision Lineage data from early adopters
-
-**Phase 2: Commercial Bridge (6–12 Months)**
-- Launch RGAP as a commercial managed service for existing agentic frameworks
-- Open-source one reference RGAP adapter (LangGraph) as proof of concept
-- Build production-grade RGAP adapters for LangChain, CrewAI, AutoGen
-- Build Decision Forecasting on top of accumulated lineage data
-
-**Phase 3: Ecosystem Expansion (12–24 Months)**
-- Federated GAP: cross-organization autonomous systems negotiating through shared protocol
-- GAP certification standard for enterprise procurement ("Is your system GAP-compliant?")
-- Integration as runtime governance layer for NIST, ISO, EU AI Act compliance
-- Decision Accountability Score — the defining metric for the General Autonomy category
-
----
-
-## Business Model
-
-| Asset | Model | Revenue Mechanism |
+| Milestone | Deliverable | Evidence needed before marking complete |
 |---|---|---|
-| **GAP Core** | Open-Source | Builds adoption moat and protocol standard. Free forever. |
-| **RGAP Adapters** | Commercial SaaS | Managed integration service. Bridge revenue while market migrates to GAP-native. |
-| **Nexeom Platform** | Enterprise SaaS | Full GAP-native Decision Intelligence platform. Executive dashboards, audit infrastructure. |
-| **Certification** | Consulting + Tooling | GAP compliance certification, audit tooling, enterprise consulting. |
-| **Constraint Library** | Proprietary Data | Denial-and-constraint prompt corpus compounds with scale. Proprietary intelligence. |
+| 1. Reproducible alpha | Documented install, governed demo, threat model, capability matrix and review guide. | A clean checkout runs the documented commands; observed outputs identify the exact revision and configuration; known failures remain visible. |
+| 2. Execution boundary | Tool dispatch and credentials outside the agent process, with an example of deployment isolation. | Tests exercise forged/tampered/expired decisions, proposal substitution, concurrent replay, unauthorized direct tool access, halt and restart behavior. A deployed topology demonstrates that the agent cannot reach tool credentials or the protected tool directly. |
+| 3. One framework integration | A small optional LangGraph adapter using the governed action path. | A runnable workflow shows rejection, bounded replanning, approval and dispatch. A second integration path cannot silently bypass the gate. Framework compatibility is specified and tested. |
+| 4. Measured behavior | Reproducible evaluation cases and machine-readable results. | Report allowed-action completion, forbidden-action blocking, false blocks, replanning/escalation outcomes and latency, with scenario denominators and failure details. Separate deterministic fixture results from model-backed evaluations. |
+| 5. Versioned release | Tagged alpha artifact, changelog and compatibility/migration notes. | Installation and tests from the distributed artifact, documented schema/protocol versions, and an explicit scope of supported deployments. A version tag is not a security certification. |
+| 6. Independent assessment | Review and implementation reports by people other than the maintainer, if and when arranged. | Published scope, reviewed revision, methods, findings, unresolved issues and responses. Until a review happens, this remains unmet. |
 
-**Scope note.** Only the first row describes something that exists. The
-"Constraint Library" row describes a hypothetical future asset and has no
-bearing on the license of anything in this repository: the protocol
-specification, the reference kernel, and its constraint evaluators are
-Apache-2.0 and carry no proprietary reservation.
+## Subsequent work
 
----
+Priorities after the first complete integration should follow observed failures
+and deployer needs. Candidates include external audit anchoring, evidence
+revocation, authenticated durable operator controls, stronger domain evidence,
+additional adapters and distributed delegation. The present heuristic monitors,
+intent-resolution boundaries and unpopulated provenance fields also need the
+work recorded in [KNOWN_GAPS.md](KNOWN_GAPS.md).
 
-## Competitive Position
+Model-backed strategy generation and evaluation need separate evidence. A
+deterministic workflow is useful for reproducibility but does not measure
+robustness to model variation, paraphrasing or adversarial prompts. Expansion to
+more domains should follow a demonstrated integration in one domain.
 
-GAP does not compete with LLM providers (OpenAI, Anthropic, Google) on intelligence, nor with agent frameworks (LangChain, CrewAI, AutoGen) on agency. GAP defines the third layer — the governance infrastructure that makes everything they built deployable in institutional contexts. The differentiator is structural: competitors have chat logs. GAP systems have Decision Records.
+## Positioning and commercial context
 
-The positioning against existing governance and compliance tools: NIST, ISO, and EU AI Act tell organizations *what* to govern. GAP tells them *how* to govern it in real-time, autonomously.
+GAP contributes runtime authorization, policy-constrained replanning and signed
+decision evidence to an organization's AI governance program. It complements
+policy engines, identity systems, agent frameworks and audit infrastructure.
+The project does not claim that existing tools only keep chat logs, that the
+governance category was previously absent, or that GAP alone satisfies a
+regulatory framework.
 
----
+Managed adapters, deployment support and a hosted platform are possible future
+services. There is no GAP certification program, published procurement standard
+or proprietary Constraint Library in this repository. Earlier roadmap language
+described those as commercial ambitions; they are not delivered assets or
+restrictions on use of the code.
 
-*General Autonomy Protocol · Nexeom · 2026*
+The published specification, reference implementation, evaluators and
+documentation remain Apache-2.0. Any future service must state its own terms
+without implying that the open proposal or its current code has become
+proprietary.

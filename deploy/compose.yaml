@@ -1,0 +1,64 @@
+name: gap-governed-demo
+
+x-runtime: &runtime
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+  image: gap-governed-demo:local
+  user: "${GAP_UID:-1000}:${GAP_GID:-1000}"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: [/tmp:size=16777216]
+  pids_limit: 128
+  mem_limit: 512m
+
+services:
+  sink:
+    <<: *runtime
+    command: [python, -m, gap_kernel.gateway.sink, --token-file, /run/gap-sink/tool-token, --db, /state/notes.sqlite, --host, 0.0.0.0, --port, "8091"]
+    volumes:
+      - ${GAP_DEMO_DIR:?Set GAP_DEMO_DIR to the absolute provisioned directory}/sink:/run/gap-sink:ro
+      - ${GAP_DEMO_DIR}/state/sink:/state
+    networks: [backend]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health', timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  gateway:
+    <<: *runtime
+    command: [python, -m, gap_kernel.gateway.app, --config, /run/gap-gateway/config.json, --state-dir, /state, --host, 0.0.0.0, --port, "8090"]
+    volumes:
+      - ${GAP_DEMO_DIR}/gateway:/run/gap-gateway:ro
+      - ${GAP_DEMO_DIR}/state/gateway:/state
+    networks: [frontend, backend]
+    ports: ["127.0.0.1:8090:8090"]
+    depends_on:
+      sink:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  agent:
+    <<: *runtime
+    command: [python, examples/container_check.py]
+    volumes:
+      - ${GAP_DEMO_DIR}/agent:/run/gap-agent:ro
+    environment:
+      GAP_GATEWAY_URL: http://gateway:8090
+      GAP_TEST_SINK_IP: ${GAP_TEST_SINK_IP:-}
+    networks: [frontend]
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+networks:
+  frontend:
+    internal: true
+  backend:
+    internal: true

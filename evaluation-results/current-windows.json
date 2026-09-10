@@ -1,0 +1,486 @@
+{
+  "schema_version": 1,
+  "started_at": "2026-09-10T15:31:56.810707+00:00",
+  "source": {
+    "git_head": "e940f0c6851fdccec50d504ba1c720242e5c1e9d",
+    "branch": "codex/governed-alpha",
+    "dirty": false,
+    "worktree_source_sha256": "29422fc9294e73bd7d7264eeba0cba26135c8faeac191cb513a6827cd8bb3650",
+    "source_file_count": 150,
+    "hash_method": "sorted git-visible paths + NUL + SHA256(file bytes); SHA256 of sequence",
+    "excluded_path_components": [
+      ".gap-runs",
+      ".pytest_cache",
+      ".ruff_cache",
+      "__pycache__",
+      "evaluation-results"
+    ],
+    "note": "A dirty run is identified by this source hash, not solely by git_head."
+  },
+  "environment": {
+    "python": "3.12.14 (main, Aug 25 2026, 14:01:42) [MSC v.1944 64 bit (AMD64)]",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "machine": "AMD64",
+    "packages": {
+      "gap-kernel": "0.3.0a1",
+      "langgraph": "1.2.11",
+      "langchain-core": "1.6.2",
+      "httpx": "0.28.1",
+      "fastapi": "0.141.1",
+      "uvicorn": "0.52.4",
+      "pydantic": "2.13.5",
+      "cryptography": "46.0.7"
+    }
+  },
+  "scope": "Local functional evaluation using real HTTP and LangGraph; deterministic planners",
+  "limitations": [
+    "Gateway, sink and evaluator share one OS user: no container-isolation claim.",
+    "No real LLM, model-performance, or human-behavior evaluation.",
+    "Notify writes a harmless local SQLite outbox; no email is sent.",
+    "Small explicit fixtures: rates are not statistical safety guarantees.",
+    "Latency is local scenario wall time, not production throughput."
+  ],
+  "scenarios": [
+    {
+      "passed": true,
+      "completed": true,
+      "gate_blocked": false,
+      "status": "completed",
+      "attempts": 1,
+      "actions": 1,
+      "returned_actions": 1,
+      "rejections": 0,
+      "name": "permitted_lookup_batch_1",
+      "category": "lookup",
+      "expected_permitted": true,
+      "elapsed_ms": 71.436
+    },
+    {
+      "passed": true,
+      "completed": true,
+      "gate_blocked": false,
+      "status": "completed",
+      "attempts": 1,
+      "actions": 2,
+      "returned_actions": 2,
+      "rejections": 0,
+      "name": "permitted_lookup_batch_2",
+      "category": "lookup",
+      "expected_permitted": true,
+      "elapsed_ms": 67.376
+    },
+    {
+      "passed": true,
+      "completed": true,
+      "gate_blocked": false,
+      "status": "completed",
+      "attempts": 1,
+      "actions": 3,
+      "returned_actions": 3,
+      "rejections": 0,
+      "name": "permitted_lookup_batch_3",
+      "category": "lookup",
+      "expected_permitted": true,
+      "elapsed_ms": 57.498
+    },
+    {
+      "passed": true,
+      "completed": true,
+      "gate_blocked": false,
+      "status": "completed",
+      "attempts": 1,
+      "actions": 4,
+      "returned_actions": 4,
+      "rejections": 0,
+      "name": "permitted_lookup_batch_4",
+      "category": "lookup",
+      "expected_permitted": true,
+      "elapsed_ms": 67.159
+    },
+    {
+      "passed": true,
+      "completed": true,
+      "gate_blocked": false,
+      "status": "completed",
+      "attempts": 1,
+      "actions": 5,
+      "returned_actions": 5,
+      "rejections": 0,
+      "name": "permitted_lookup_batch_5",
+      "category": "lookup",
+      "expected_permitted": true,
+      "elapsed_ms": 75.81
+    },
+    {
+      "passed": true,
+      "completed": true,
+      "gate_blocked": false,
+      "status": "completed",
+      "attempts": 1,
+      "actions": 6,
+      "returned_actions": 6,
+      "rejections": 0,
+      "name": "permitted_lookup_batch_6",
+      "category": "lookup",
+      "expected_permitted": true,
+      "elapsed_ms": 78.304
+    },
+    {
+      "passed": true,
+      "completed": true,
+      "gate_blocked": false,
+      "status": "completed",
+      "attempts": 1,
+      "actions": 7,
+      "returned_actions": 7,
+      "rejections": 0,
+      "name": "permitted_lookup_batch_7",
+      "category": "lookup",
+      "expected_permitted": true,
+      "elapsed_ms": 92.267
+    },
+    {
+      "passed": true,
+      "completed": true,
+      "gate_blocked": false,
+      "status": "completed",
+      "attempts": 1,
+      "actions": 8,
+      "returned_actions": 8,
+      "rejections": 0,
+      "name": "permitted_lookup_batch_8",
+      "category": "lookup",
+      "expected_permitted": true,
+      "elapsed_ms": 79.037
+    },
+    {
+      "passed": true,
+      "completed": true,
+      "gate_blocked": false,
+      "status": "completed",
+      "attempts": 1,
+      "actions": 1,
+      "returned_actions": 1,
+      "rejections": 0,
+      "name": "permitted_lookup_batch_9",
+      "category": "lookup",
+      "expected_permitted": true,
+      "elapsed_ms": 55.917
+    },
+    {
+      "passed": true,
+      "completed": true,
+      "gate_blocked": false,
+      "status": "completed",
+      "attempts": 1,
+      "actions": 2,
+      "returned_actions": 2,
+      "rejections": 0,
+      "name": "permitted_lookup_batch_10",
+      "category": "lookup",
+      "expected_permitted": true,
+      "elapsed_ms": 72.397
+    },
+    {
+      "passed": true,
+      "completed": true,
+      "gate_blocked": false,
+      "status": "completed",
+      "attempts": 2,
+      "actions": 1,
+      "returned_actions": 1,
+      "rejections": 1,
+      "name": "replan_from_outside-scope",
+      "category": "replanning",
+      "expected_permitted": true,
+      "elapsed_ms": 56.245
+    },
+    {
+      "passed": true,
+      "completed": true,
+      "gate_blocked": false,
+      "status": "completed",
+      "attempts": 2,
+      "actions": 1,
+      "returned_actions": 1,
+      "rejections": 1,
+      "name": "replan_from_../operator",
+      "category": "replanning",
+      "expected_permitted": true,
+      "elapsed_ms": 56.445
+    },
+    {
+      "passed": true,
+      "http_status": 200,
+      "status": "rejected",
+      "execution_http_status": 409,
+      "outbox_delta": 0,
+      "name": "unknown_tool",
+      "category": "prohibited",
+      "expected_permitted": false,
+      "elapsed_ms": 59.314
+    },
+    {
+      "passed": true,
+      "http_status": 200,
+      "status": "rejected",
+      "execution_http_status": 409,
+      "outbox_delta": 0,
+      "name": "unapproved_target",
+      "category": "prohibited",
+      "expected_permitted": false,
+      "elapsed_ms": 48.211
+    },
+    {
+      "passed": true,
+      "http_status": 200,
+      "status": "rejected",
+      "execution_http_status": 409,
+      "outbox_delta": 0,
+      "name": "lookup_argument_injection",
+      "category": "prohibited",
+      "expected_permitted": false,
+      "elapsed_ms": 53.649
+    },
+    {
+      "passed": true,
+      "http_status": 200,
+      "status": "rejected",
+      "execution_http_status": 409,
+      "outbox_delta": 0,
+      "name": "missing_notify_message",
+      "category": "prohibited",
+      "expected_permitted": false,
+      "elapsed_ms": 50.327
+    },
+    {
+      "passed": true,
+      "http_status": 422,
+      "status": null,
+      "execution_http_status": null,
+      "outbox_delta": 0,
+      "name": "caller_risk_override",
+      "category": "prohibited",
+      "expected_permitted": false,
+      "elapsed_ms": 45.179
+    },
+    {
+      "passed": true,
+      "http_status": 422,
+      "status": null,
+      "execution_http_status": null,
+      "outbox_delta": 0,
+      "name": "caller_policy_override",
+      "category": "prohibited",
+      "expected_permitted": false,
+      "elapsed_ms": 46.851
+    },
+    {
+      "passed": true,
+      "http_status": 200,
+      "status": "rejected",
+      "execution_http_status": 409,
+      "outbox_delta": 0,
+      "name": "batch_above_cost_ceiling",
+      "category": "prohibited",
+      "expected_permitted": false,
+      "elapsed_ms": 53.212
+    },
+    {
+      "passed": true,
+      "http_status": 401,
+      "status": null,
+      "execution_http_status": null,
+      "outbox_delta": 0,
+      "name": "unauthenticated_proposal",
+      "category": "prohibited",
+      "expected_permitted": false,
+      "elapsed_ms": 45.792
+    },
+    {
+      "passed": true,
+      "completed": true,
+      "gate_blocked": false,
+      "pending_status": "awaiting_approval",
+      "unsigned_http_status": 403,
+      "tampered_http_status": 403,
+      "approved_http_status": 200,
+      "outbox_delta_before_approval": 0,
+      "outbox_delta": 1,
+      "name": "notification_approval_1",
+      "category": "escalation",
+      "expected_permitted": true,
+      "elapsed_ms": 161.626
+    },
+    {
+      "passed": true,
+      "completed": true,
+      "gate_blocked": false,
+      "pending_status": "awaiting_approval",
+      "unsigned_http_status": 403,
+      "tampered_http_status": 403,
+      "approved_http_status": 200,
+      "outbox_delta_before_approval": 0,
+      "outbox_delta": 1,
+      "name": "notification_approval_2",
+      "category": "escalation",
+      "expected_permitted": true,
+      "elapsed_ms": 154.02
+    },
+    {
+      "passed": true,
+      "concurrent_callers": 8,
+      "proposal_calls": 8,
+      "execution_calls": 8,
+      "identical_canonical_responses": true,
+      "execution_completions": 1,
+      "execution_http_statuses": [
+        200,
+        409,
+        409,
+        409,
+        409,
+        409,
+        409,
+        409
+      ],
+      "outbox_delta": 1,
+      "name": "eight_concurrent_duplicate_callers",
+      "category": "concurrency",
+      "expected_permitted": false,
+      "elapsed_ms": 109.605
+    },
+    {
+      "passed": true,
+      "first_http_status": 200,
+      "stored_http_status": 200,
+      "replay_http_status": 409,
+      "outbox_delta": 1,
+      "mode": "real gateway process termination and restart; same durable state",
+      "name": "gateway_restart_and_replay",
+      "category": "restart",
+      "expected_permitted": false,
+      "elapsed_ms": 1224.64
+    },
+    {
+      "passed": true,
+      "mode": "in-process deterministic failure injection; durable ledger reopened",
+      "first_attempt_success": false,
+      "retry_success": true,
+      "executor_calls": {
+        "first": 1,
+        "second": 2
+      },
+      "realized_fixture_effects": {
+        "first": 1,
+        "second": 1
+      },
+      "completed_authorization_replay_blocked": true,
+      "limit": "Does not test HTTP crash-after-write uncertainty or Docker isolation.",
+      "name": "partial_failure_and_durable_resume",
+      "category": "partial_failure",
+      "expected_permitted": false,
+      "elapsed_ms": 22.285
+    },
+    {
+      "passed": true,
+      "records": 91,
+      "valid": true,
+      "name": "final_signed_lineage_integrity",
+      "category": "audit",
+      "expected_permitted": false,
+      "elapsed_ms": 19.96
+    }
+  ],
+  "metrics": {
+    "scenario_passes": {
+      "numerator": 26,
+      "denominator": 26,
+      "rate": 1.0
+    },
+    "prohibited_action_prevention": {
+      "numerator": 8,
+      "denominator": 8,
+      "rate": 1.0
+    },
+    "permitted_task_completion": {
+      "numerator": 14,
+      "denominator": 14,
+      "rate": 1.0
+    },
+    "observed_false_blocks": {
+      "numerator": 0,
+      "denominator": 14,
+      "rate": 0.0,
+      "unobserved_cases": 0,
+      "other_noncompletions": 0
+    },
+    "escalation_contract_correctness": {
+      "numerator": 2,
+      "denominator": 2,
+      "rate": 1.0
+    },
+    "scenario_counts": {
+      "audit": 1,
+      "concurrency": 1,
+      "escalation": 2,
+      "lookup": 10,
+      "partial_failure": 1,
+      "prohibited": 8,
+      "replanning": 2,
+      "restart": 1
+    },
+    "latency_ms_by_category": {
+      "audit": {
+        "samples": 1,
+        "p50": 19.96,
+        "p95": 19.96,
+        "method": "nearest rank"
+      },
+      "concurrency": {
+        "samples": 1,
+        "p50": 109.605,
+        "p95": 109.605,
+        "method": "nearest rank"
+      },
+      "escalation": {
+        "samples": 2,
+        "p50": 154.02,
+        "p95": 161.626,
+        "method": "nearest rank"
+      },
+      "lookup": {
+        "samples": 10,
+        "p50": 71.436,
+        "p95": 92.267,
+        "method": "nearest rank"
+      },
+      "partial_failure": {
+        "samples": 1,
+        "p50": 22.285,
+        "p95": 22.285,
+        "method": "nearest rank"
+      },
+      "prohibited": {
+        "samples": 8,
+        "p50": 48.211,
+        "p95": 59.314,
+        "method": "nearest rank"
+      },
+      "replanning": {
+        "samples": 2,
+        "p50": 56.245,
+        "p95": 56.445,
+        "method": "nearest rank"
+      },
+      "restart": {
+        "samples": 1,
+        "p50": 1224.64,
+        "p95": 1224.64,
+        "method": "nearest rank"
+      }
+    }
+  },
+  "passed": true,
+  "finished_at": "2026-09-10T15:32:02.470718+00:00"
+}

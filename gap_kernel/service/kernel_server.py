@@ -11,10 +11,11 @@ The service is transport-agnostic (``handle`` maps a request dict to a response
 dict); ``serve_stdio`` runs it as a subprocess over newline-delimited JSON, and
 ``GovernanceClient`` implementations (gap_kernel/client) consume it.
 
-The kernel's TRUST ROOT — the key that verifies the signed Applicability Profile,
-and the identity the kernel signs decisions with — is resolved here from a
-deployer-owned path (``GAP_TRUST_ROOT``), never from the config the agent-side
-parent hands down. See :class:`TrustRoot`.
+The kernel's TRUST ROOT — the keys that verify the signed Applicability Profile,
+the keys that verify a Signed Evidence Attestation, and the identity the kernel
+signs decisions with — is resolved here from a deployer-owned path
+(``GAP_TRUST_ROOT``), never from the config the agent-side parent hands down.
+See :class:`TrustRoot`.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ import logging
 import os
 import stat
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Optional, TextIO, Tuple
 
 from pydantic import ValidationError
@@ -85,12 +86,16 @@ class TrustRootError(GovernanceConfigError):
 class TrustRoot:
     """The kernel's independently-deployed trust root.
 
-    Two things a governed kernel must NOT take from the agent-side parent:
+    Three things a governed kernel must NOT take from the agent-side parent:
 
       * ``profile_keys`` — the public keys an Applicability Profile may be signed
         by. Taking these from the same party that supplies the profile makes
         verification circular: the profile is checked against its own author's
         key, so any profile the parent chooses verifies.
+      * ``evidence_issuers`` — the public keys a Signed Evidence Attestation may
+        be signed by. Identical reasoning: the agent side authors the whole
+        ``world_state`` field of an ``evaluate`` request, so an issuer registry
+        it also supplies would verify whatever it chose to sign.
       * the kernel identity (``kernel_public_key_hex`` + the private key at
         ``kernel_identity_path``) — persisted so the key an auditor pins is the
         same key across restarts, instead of one minted per process.
@@ -103,10 +108,21 @@ class TrustRoot:
     profile_keys: Dict[str, str]
     kernel_public_key_hex: str
     kernel_identity_path: str
+    evidence_issuers: Dict[str, str] = field(default_factory=dict)
 
     def profile_key_registry(self) -> PublicKeyRegistry:
         """The ONLY registry a trust-rooted kernel verifies profiles against."""
         return PublicKeyRegistry(dict(self.profile_keys))
+
+    def evidence_issuer_registry(self) -> PublicKeyRegistry:
+        """The ONLY registry a trust-rooted kernel verifies evidence against.
+
+        An empty map is a valid, fail-closed state: the kernel accepts no
+        attestation at all, so every world-model-backed constraint is
+        unevaluable and therefore violated. That is deliberately louder than
+        falling back to something the agent side supplied.
+        """
+        return PublicKeyRegistry(dict(self.evidence_issuers))
 
     def load_kernel_identity(self) -> Tuple[str, str]:
         """Return ``(private_key_hex, public_key_hex)`` for the pinned identity.
@@ -192,6 +208,18 @@ def load_trust_root(path: Optional[str] = None) -> TrustRoot:
             f"identity would be whatever the process minted at start-up."
         )
 
+    # Optional: a deployment that carries no evidence issuers fails closed on
+    # every world-model-backed constraint rather than refusing to boot, so the
+    # absence of the key is a posture and not a configuration error.
+    evidence_issuers = data.get("evidence_issuers") or {}
+    if not isinstance(evidence_issuers, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) and v
+        for k, v in evidence_issuers.items()
+    ):
+        raise TrustRootError(
+            f"Trust root '{resolved}' has a malformed 'evidence_issuers' map."
+        )
+
     identity_path = data.get("kernel_identity_path")
     if not isinstance(identity_path, str) or not identity_path:
         raise TrustRootError(
@@ -207,10 +235,15 @@ def load_trust_root(path: Optional[str] = None) -> TrustRoot:
         profile_keys=dict(profile_keys),
         kernel_public_key_hex=kernel_public_key_hex,
         kernel_identity_path=identity_path,
+        evidence_issuers=dict(evidence_issuers),
     )
 
 
-def provision_trust_root(directory: str, profile_keys: Dict[str, str]) -> TrustRoot:
+def provision_trust_root(
+    directory: str,
+    profile_keys: Dict[str, str],
+    evidence_issuers: Optional[Dict[str, str]] = None,
+) -> TrustRoot:
     """Create (or re-read) a trust root in ``directory`` and return it.
 
     Idempotent in the identity: an existing ``kernel_identity.json`` is kept, so
@@ -219,6 +252,13 @@ def provision_trust_root(directory: str, profile_keys: Dict[str, str]) -> TrustR
     supports it — on a host where the agent process runs as the same user this is
     hygiene, not a boundary; running the kernel as a separate user is what makes
     the private key genuinely unreachable from the agent side.
+
+    ``evidence_issuers`` is the PUBLIC half of each key allowed to sign a Signed
+    Evidence Attestation. The same caveat applies with more force: the guarantee
+    is a property of where the corresponding PRIVATE keys live, not of this file.
+    If an issuer private key sits on this host under the OS user the agent runs
+    as, the agent reads it and mints any consent it likes, and the attestation
+    certifies nothing that adversary did not already control.
 
     The deployer then points ``GAP_TRUST_ROOT`` at the returned ``path``.
     """
@@ -247,6 +287,7 @@ def provision_trust_root(directory: str, profile_keys: Dict[str, str]) -> TrustR
     root_path = os.path.join(directory, TRUST_ROOT_FILENAME)
     _write_json(root_path, {
         "profile_keys": dict(profile_keys),
+        "evidence_issuers": dict(evidence_issuers or {}),
         "kernel_public_key_hex": public_key_hex,
         "kernel_identity_path": KERNEL_IDENTITY_FILENAME,
     })
@@ -261,19 +302,24 @@ def _write_json(path: str, data: dict) -> None:
 def dump_governed_config(
     applicability_profile: ApplicabilityProfile,
     profile_key_registry: PublicKeyRegistry,
+    evidence_issuers: Optional[PublicKeyRegistry] = None,
 ) -> dict:
     """Serialize the config a subprocess kernel needs to run GOVERNED — the signed
-    Applicability Profile plus the (public-key-only) profile key registry. No
-    private key or secret crosses the boundary.
+    Applicability Profile plus the (public-key-only) profile key and evidence
+    issuer registries. No private key or secret crosses the boundary.
 
-    The registry here is a PROTOTYPE convenience: it is authored by the same
-    process that authors the profile, so it cannot establish trust on its own.
-    When the kernel process resolves a trust root, the registry in this blob is
-    ignored entirely — see :func:`kernel_from_governed_config`.
+    Both registries here are a PROTOTYPE convenience: they are authored by the
+    same process that authors the profile and the world state, so neither can
+    establish trust on its own. When the kernel process resolves a trust root,
+    both registries in this blob are ignored entirely — see
+    :func:`kernel_from_governed_config`.
     """
     return {
         "profile": applicability_profile.model_dump(mode="json"),
         "registry": profile_key_registry.as_dict(),
+        "evidence_issuers": (
+            evidence_issuers.as_dict() if evidence_issuers is not None else {}
+        ),
     }
 
 
@@ -282,26 +328,30 @@ def kernel_from_governed_config(
 ) -> GovernanceKernel:
     """Construct a governed GovernanceKernel from a ``dump_governed_config`` dict.
 
-    With a ``trust_root``, the profile is verified against the trust root's keys
-    and the kernel signs with the trust root's persisted identity; the registry
-    inside ``config`` is not consulted at all. Without one, the config's own
-    registry is used — the prototype posture, in which the caller both supplies
-    and vouches for the profile.
+    With a ``trust_root``, the profile is verified against the trust root's keys,
+    evidence is verified against the trust root's issuers, and the kernel signs
+    with the trust root's persisted identity; NEITHER registry inside ``config``
+    is consulted at all. Without one, the config's own registries are used — the
+    prototype posture, in which the caller both supplies and vouches for the
+    profile and for the evidence.
 
     Either way the kernel raises (fail closed) on an unsigned / tampered /
-    unknown-key profile.
+    unknown-key profile, and rejects any attestation it cannot verify.
     """
     profile = ApplicabilityProfile.model_validate(config["profile"])
     if trust_root is not None:
         registry = trust_root.profile_key_registry()
+        evidence_issuers = trust_root.evidence_issuer_registry()
         signing_key_hex, public_key_hex = trust_root.load_kernel_identity()
     else:
         registry = PublicKeyRegistry(config.get("registry") or {})
+        evidence_issuers = PublicKeyRegistry(config.get("evidence_issuers") or {})
         signing_key_hex = public_key_hex = None
     return GovernanceKernel(
         governed=True,
         applicability_profile=profile,
         profile_key_registry=registry,
+        evidence_issuers=evidence_issuers,
         signing_key_hex=signing_key_hex,
         public_key_hex=public_key_hex,
     )

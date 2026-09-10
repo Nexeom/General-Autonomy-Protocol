@@ -27,8 +27,26 @@ the [Threat Model](THREAT_MODEL.md). For what is known-broken right now, read
 | 🔧 **Deployment-configured** | Delivered by deployment topology, not by this codebase. The code provides the seam; the deployer provides the guarantee. |
 | 📋 **Normative / Planned** | Specified but not implemented. |
 
-Baseline: **550 tests**, 93% line coverage, CI-enforced 90% floor, on Python
-3.11–3.13 (Linux) and 3.13 (Windows).
+Per-revision verification and scenario denominators are recorded in
+[EVALUATION.md](EVALUATION.md) and CI. The configured suite gate remains 90%
+line coverage across Python 3.11–3.13 on Linux and 3.13 on Windows. A CI
+configuration is not itself evidence that a particular revision passed.
+
+## Reference tool gateway (v0.3 alpha)
+
+| Capability | Status | Evidence and boundary |
+|---|---|---|
+| Agent/tool credential separation | 🔧 Deployment-configured | `gateway/service.py` owns keys, policy, evidence, ledgers and dispatch. `deploy/compose.yaml` gives the agent only its request token on a separate internal network. Container checks include direct backend IP reachability. Same-user local demo is functional evidence only. |
+| Trusted proposal construction | ✅ Enforced | HTTP models forbid extra fields; the gateway rebuilds risk, cost, target and action type from the two-tool operator catalog. `tests/test_gateway.py`. |
+| Human L2 approval | ✅ Enforced | Operator validates the kernel signature and proposal digest, reviews the request, then signs; gateway verifies signature, authority ceiling, expiry and replay. Automated demo uses an explicitly scripted approver fixture. |
+| Durable retries and side-effect idempotency | 🟡 Partial | Failed retries persist `in_progress`; execution and approval ledgers survive gateway restart. Reference sink owns a persistent idempotency key/content binding, including lost-response retries. Generic external tools still require their own idempotency/fencing contract. |
+| Runtime conditions | 🟡 Partial | Unsupported conditions keep the policy active conservatively; no expression evaluator. `tests/test_fail_closed.py`. |
+| Operator halt | 🔧 Deployment-configured | Operator-owned `halted` file checked on proposal, execute and each dispatch; agent cannot toggle it through HTTP. Host/container admin access supplies identity assurance. In-flight effects cannot be undone. |
+| LangGraph integration | ✅ Enforced | Real compiled graph uses remote propose/execute API, bounds replanning and stops on approval waits/errors. `tests/test_langgraph_integration.py`; deterministic planners do not demonstrate LLM quality. |
+| Signed gateway evidence | 🟡 Partial | Allowed and early rejected requests have signed lineage. Requests/ledgers live outside agent mounts. No external witness/WORM anchor; trusted gateway owner can rewrite history. |
+
+This gateway covers `lookup` and `notify` only, not every mechanism in the
+embedded library matrix below. See [GATEWAY.md](GATEWAY.md).
 
 ---
 
@@ -41,7 +59,7 @@ Baseline: **550 tests**, 93% line coverage, CI-enforced 90% floor, on Python
 | **The kernel owns its clock** — a caller-supplied `current_time` cannot deactivate a schedule-gated constraint | ✅ Enforced | A governed kernel ignores the parameter and reads `utcnow()` (`_resolve_time`); the RPC no longer carries it at all. Previously an agent could name a time outside a cron window, drop the constraint from `_get_active_constraints`, and receive a genuinely kernel-signed approval backdated a year. → `tests/test_registry_integrity.py`, `tests/test_boundary_hardening.py` |
 | **Temporal authority fails closed** — a malformed schedule does not silently disable a constraint | ✅ Enforced | `governance/kernel.py` (`_is_constraint_active`) → `tests/test_fail_closed.py` |
 | **World-model-backed constraints fail closed on an untracked target** | ✅ Enforced | The GDPR and contact-hours gates branched on `if entity:` with no else, and the agent authors `action.target` — so it chose whether the gate had anything to evaluate. Untracked targets are now a violation in governed mode (`allow_untracked_targets`, default False when governed). → `tests/test_registry_integrity.py` |
-| **Governance-relevant evidence must be attested** | ✅ Enforced | The world model is what the constraint evaluators read, and `POST /world/ingest` accepted arbitrary properties unauthenticated: re-ingesting an entity with `gdpr_consent: true` turned a rejected proposal into a kernel-signed approval, and rewriting `geo` to `US` skipped the EU branch entirely. `gdpr_consent`, `geo`, `jurisdiction` and `local_hour` now carry store-stamped provenance; a governed kernel treats an unattested value as unevaluable, which is a violation. Attested consent still approves — this is a trust model, not a blanket refusal. → `tests/test_world_model_trust.py` |
+| **Governance-relevant evidence must be attested** | 🔧 Deployment-configured | `gdpr_consent`, `geo`, `jurisdiction` and `local_hour` now require a **Signed Evidence Attestation**: an Ed25519 signature by a registered issuer binding the entity id, the exact values, the window and the issuer key id, verified by the kernel against issuers resolved from the trust root. Values are compared as canonical JSON, so a signature over `1` does not certify `True`. An unverifiable value is unevaluable, which is a violation. → `tests/test_evidence_attestation.py`, `tests/test_world_model_trust.py`. **The previous edition of this row was Partial because the stamp was an unsigned dict a caller could write; that is closed.** What decides whether this row is worth anything is the DEPLOYMENT, which is why it is 🔧 and not 🟢: if an issuer private key lives on the agent's host under the agent's OS user, the agent mints its own consent and GAP certifies it. Three further limits, stated with the claim: a signature proves a registered issuer *asserted* a fact, not that the fact is TRUE — a compromised source of record signs falsehoods and GAP certifies them faithfully, structurally identical to "GAP verifies a signature, it cannot verify a person"; there is no revocation list, so a captured attestation is replayable until the kernel's max-age ceiling passes (bounded, not closed — GAP is **not** compliant on immediate consent withdrawal); and this hardens **2 of the 9 registered evaluators**, `gdpr_consent_required` and `no_contact_outside_hours`, the only two that read the world model. |
 | **Authorization comparator** — rank-based `granted ≥ required` | ✅ Enforced | `governance/kernel.py` (`_satisfies_auth`/`_max_auth`) → `tests/test_tier_enforcement.py` |
 | **Policy Tier 1 regulatory floor** — loaded from a signed, runtime-immutable Applicability Profile, always active, not weakenable by lower tiers | ✅ Enforced | `governance/profile.py`, `governance/kernel.py` (`_tier1_floor`) → `tests/test_tier_enforcement.py`. The floor's *content* is deployment-specific; *requiring* one is enforced. |
 | **Regulatory Constraint Category evaluators** — all 8 spec categories | 🟡 Partial | `governance/kernel.py` (`_CONSTRAINT_EVALUATORS`, 9 entries covering 8 categories plus a cost ceiling) → `tests/test_regulatory_categories.py`. **Honestly scoped — these are STRUCTURAL gates, not legal adjudication.** Each evaluator checks that a required element is present and declared (a fairness evaluation was performed, AML/sanctions screening ran, AI disclosure occurred, PHI access is justified). It does not adjudicate whether the fairness result *passed*, whether a disclosure was *adequate*, or whether content infringes. Numeric thresholds come from the structured `Constraint.threshold` field, never parsed from free text; a present-but-malformed value fails closed. |
@@ -77,7 +95,7 @@ Baseline: **550 tests**, 93% line coverage, CI-enforced 90% floor, on Python
 | **The kernel resolves its own trust root** | ✅ Enforced | Previously circular: the agent-side parent supplied **both** the signed profile and the public keys verifying it, so the child verified the attacker's signature against the attacker's key. The child now resolves `GAP_TRUST_ROOT` — a path the deployer owns — and with a trust root in force the registry the parent hands down is deliberately empty. Required by default; absence **raises**. → `tests/test_deployment_defaults.py` |
 | **Persistent, pinnable kernel identity** | ✅ Enforced | The keypair was regenerated every process start, so no external auditor could pin it. It now persists, and the subprocess client pins it. Detects child substitution and silent key regeneration; does **not** defend against an adversary already executing code in the parent. |
 | **Boundary robustness** — correlated, bounded, non-leaking | ✅ Enforced | Two concurrent evaluations could each receive **the other's signed decision** (no lock, no request id, sync routes on one shared client from a threadpool). Now request-id correlated under a lock, failing closed and killing the child on desync. Requests are size-bounded (the read was unbounded — the agent could OOM the governance authority); errors are stable codes rather than exception text carrying paths and field values; the child's stdout is off the protocol channel. → `tests/test_boundary_hardening.py` |
-| **Structural isolation of governance from the agent** (spec §Layer 1) | 🟡 Partial | **This is the requirement the implementation meets least completely, and the most important row in this document.** The kernel's key and configuration are isolated. Signature *verification* is not: `ExecutionFabric` is constructed in the agent's process and holds the pinned kernel key and the unsigned-decisions escape hatch as ordinary mutable attributes, alongside the executor registry carrying tool credentials, the kill switch, the world model and the lineage store. An adversary with **code execution in the agent process** bypasses governance without forging anything — overwrite the pinned key, flip the flag, or call an executor directly. The boundary bounds an attacker who supplies governance *data*; it does not bound one who runs code beside the verifier. A socket/attach execution boundary that would close this is **not built**. See [Threat Model §4](THREAT_MODEL.md). |
+| **Structural isolation of governance from the agent** (spec §Layer 1) | 🟡 Partial | **This is the requirement the implementation meets least completely, and the most important row in this document.** The kernel's key and configuration are isolated. Signature *verification* is not: `ExecutionFabric` is constructed in the agent's process and holds the pinned kernel key and the unsigned-decisions escape hatch as ordinary mutable attributes, alongside the executor registry carrying tool credentials, the kill switch, the world model and the lineage store. An adversary with **code execution in the agent process** bypasses governance without forging anything — overwrite the pinned key, flip the flag, or call an executor directly. The boundary bounds an attacker who supplies governance *data*; it does not bound one who runs code beside the verifier. The separately deployed two-tool gateway now moves verification and dispatch behind an HTTP boundary; see the deployment-specific table above. This does not change the embedded path. See [Threat Model §4](THREAT_MODEL.md). |
 | **OS-level sandboxing of the kernel subprocess** | 🔧 Deployment-configured | Running the kernel as a separate OS user is what makes the private key genuinely unreachable. Same-user isolation is hygiene, not a boundary. |
 
 ## Audit trail
@@ -157,12 +175,13 @@ Baseline: **550 tests**, 93% line coverage, CI-enforced 90% floor, on Python
 Stated plainly, because the alternative is the calibration gap this document
 exists to close:
 
-1. It does not defend against an adversary with code execution in the agent
-   process. That is the architecture, not a bug backlog item.
+1. The embedded library does not defend against an adversary with code execution
+   in its process. The reference gateway separates the agent into a restricted
+   container; its protection depends on the deployed network, mounts, and trusted host.
 2. It has had **no external security review**. Every finding fixed here was
    found by its own maintainers and tooling.
-3. It has **no adopters, no tagged release, and one author**. Nothing here has
-   been tested by an independent implementer.
+3. A prior `v0.2.0-alpha` release exists; `0.3.0a1` is the current alpha version.
+   There is no documented independent adoption or implementation review.
 4. Its regulatory evaluators check structure, not legal compliance. No
    regulator has reviewed them, and alignment tables elsewhere describe design
    intent, not certification.

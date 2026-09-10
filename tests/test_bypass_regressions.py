@@ -8,7 +8,10 @@ the way an agent actually reaches them.
 """
 
 import threading
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
+
+import pytest
 
 from gap_kernel._time import utcnow
 from gap_kernel.crypto.signing import PublicKeyRegistry, generate_keypair
@@ -17,16 +20,25 @@ from gap_kernel.governance.kernel import GovernanceKernel
 from gap_kernel.governance.profile import ApplicabilityProfile, sign_profile
 from gap_kernel.models.intent import Constraint, ConstraintType, IntentVector
 from gap_kernel.models.strategy import PlannedAction, StrategyProposal
-from gap_kernel.models.world import EntityState, WorldModel
-from gap_kernel.world_model.store import (
-    EvidenceChannel,
-    WorldModelStore,
-    evidence_is_attested,
+from gap_kernel.models.world import (
+    EVIDENCE_ATTESTATION_PROPERTY,
+    EVIDENCE_PROPERTY,
+    EntityProperties,
+    EntityState,
+    WorldModel,
+)
+from gap_kernel.world_model.store import WorldModelStore
+from tests.conftest import EVIDENCE_AUTHORITY
+
+# The shared issuer (tests/conftest.py): an attested channel now signs what it
+# writes, and the kernel verifies that signature against the issuer's public key.
+ATTESTED_CRM = EVIDENCE_AUTHORITY.channel(
+    channel_id="crm", description="system of record"
 )
 
-ATTESTED_CRM = EvidenceChannel(
-    channel_id="crm", attested=True, description="system of record"
-)
+# The kernel builds one of these itself; a test needs one to assert on standing
+# directly, since there is no longer a pure function that reads it off an entity.
+VERIFIER = EVIDENCE_AUTHORITY.verifier()
 
 
 def _governed_kernel() -> GovernanceKernel:
@@ -41,6 +53,7 @@ def _governed_kernel() -> GovernanceKernel:
     return GovernanceKernel(
         applicability_profile=profile,
         profile_key_registry=PublicKeyRegistry({"regulatory_authority": pub}),
+        evidence_issuers=EVIDENCE_AUTHORITY.registry(),
     )
 
 
@@ -87,13 +100,17 @@ def _proposal(pid, action_type, parameters, risk, requires_consent):
 class TestEvidenceLaunderingThroughExecution:
     """An agent must not be able to attest its own facts by acting on them.
 
-    `WorldModelStore` refuses to let a caller declare its own evidence attested,
-    but the Execution Fabric's `update_record` executor writes results straight
-    onto `entity.properties` without going through the store. That left the
-    provenance stamp in place, still vouching for a value it never saw — so an
+    The Execution Fabric's `update_record` executor writes results straight onto
+    `entity.properties` without going through the store, which left the old
+    provenance stamp in place still vouching for a value it never saw — so an
     agent could launder its own consent in one governed, fully-signed step:
     ingest an attested `gdpr_consent=False`, run one approved `update_record`
     setting it True, and the previously-rejected outreach is approved.
+
+    Signed Evidence Attestation closes it by construction rather than by
+    bookkeeping: the signature binds the VALUE, so a write that changes the value
+    leaves the attestation vouching for the old one and the kernel's value check
+    fails. Restoring standing takes a new signature, which takes the issuer key.
     """
 
     def _setup(self):
@@ -143,7 +160,7 @@ class TestEvidenceLaunderingThroughExecution:
         assert entity.properties["gdpr_consent"] is True, (
             "the write itself is allowed; what it must lose is attested standing"
         )
-        assert not evidence_is_attested(entity, "gdpr_consent")
+        assert not VERIFIER.attests(entity, "gdpr_consent")
 
         after = self._evaluate(
             kernel, intent, world, _proposal("out_2", "send_email", {}, 3, True)
@@ -157,7 +174,7 @@ class TestEvidenceLaunderingThroughExecution:
         store, kernel, intent = self._setup()
         world = store.model
         world.entities["lead_eu_1"].properties["gdpr_consent"] = True
-        assert not evidence_is_attested(world.entities["lead_eu_1"], "gdpr_consent")
+        assert not VERIFIER.attests(world.entities["lead_eu_1"], "gdpr_consent")
 
         store.upsert_entity(
             EntityState(
@@ -170,7 +187,7 @@ class TestEvidenceLaunderingThroughExecution:
             ),
             channel=ATTESTED_CRM,
         )
-        assert evidence_is_attested(store.model.entities["lead_eu_1"], "gdpr_consent")
+        assert VERIFIER.attests(store.model.entities["lead_eu_1"], "gdpr_consent")
         approved = self._evaluate(
             kernel, intent, store.model, _proposal("out_3", "send_email", {}, 3, True)
         )
@@ -180,8 +197,43 @@ class TestEvidenceLaunderingThroughExecution:
         store, _, _ = self._setup()
         entity = store.model.entities["lead_eu_1"]
         entity.properties["lead_score"] = 91
-        assert evidence_is_attested(entity, "gdpr_consent")
-        assert evidence_is_attested(entity, "geo")
+        assert VERIFIER.attests(entity, "gdpr_consent")
+        assert VERIFIER.attests(entity, "geo")
+
+    def test_execution_cannot_replace_audit_provenance_with_the_old_stamp(self):
+        store, kernel, intent = self._setup()
+        entity = store.model.entities["lead_eu_1"]
+        original_provenance = dict(entity.properties[EVIDENCE_PROPERTY])
+        original_attestation = dict(entity.properties[EVIDENCE_ATTESTATION_PROPERTY])
+        update = _proposal(
+            "forged_stamp", "update_record",
+            {"updates": {
+                "gdpr_consent": True,
+                EVIDENCE_PROPERTY: {
+                    "channel": "forged_crm",
+                    "attested": True,
+                    "governance_properties": ["geo", "gdpr_consent"],
+                },
+            }},
+            1, False,
+        )
+        decision = self._evaluate(kernel, intent, store.model, update)
+        assert decision.verdict.value == "approved"
+        result = ExecutionFabric(
+            store.model, kernel_public_key_hex=kernel.public_key_hex,
+        ).execute(update, decision)
+
+        assert result.success
+        assert entity.properties["gdpr_consent"] is True
+        assert entity.properties[EVIDENCE_PROPERTY] == original_provenance
+        assert entity.properties[EVIDENCE_ATTESTATION_PROPERTY] == original_attestation
+        assert not VERIFIER.attests(entity, "gdpr_consent")
+        after = self._evaluate(
+            kernel, intent, store.model,
+            _proposal("out_after_forged_stamp", "send_email", {}, 3, True),
+        )
+        assert after.verdict.value == "rejected"
+        assert "gdpr_consent_required" in after.violated_constraints
 
 
 class TestConcurrentReplay:
@@ -258,23 +310,209 @@ class TestConcurrentReplay:
         assert resumed.resumed is True
         assert resumed.attempts == 2
 
-    def test_an_expired_lease_is_resumable(self):
+    def test_an_expired_lease_is_resumable(self, monkeypatch):
         # A process that dies mid-dispatch must not strand the authorization.
         from gap_kernel.verification.execution_ledger import ExecutionLedger
 
-        ledger = ExecutionLedger(lease_seconds=0)
+        now = datetime(2026, 9, 10, tzinfo=timezone.utc)
+        monkeypatch.setattr(
+            "gap_kernel.verification.execution_ledger.utcnow", lambda: now,
+        )
+        ledger = ExecutionLedger(lease_seconds=30)
         ledger.begin("n2", decision_id="d1", proposal_id="p1")
+        now += timedelta(seconds=30)
+        from gap_kernel.verification.execution_ledger import ExecutionReplayError
+        with pytest.raises(ExecutionReplayError, match="in flight"):
+            ledger.begin("n2", decision_id="d1", proposal_id="p1")
+
+        now += timedelta(microseconds=1)
         resumed = ledger.begin("n2", decision_id="d1", proposal_id="p1")
         assert resumed.resumed is True
+        assert resumed.attempts == 2
+        # The recovered attempt owns a fresh lease, even at the same instant.
+        with pytest.raises(ExecutionReplayError, match="in flight"):
+            ledger.begin("n2", decision_id="d1", proposal_id="p1")
+
+    def test_failed_retry_is_exclusive_across_durable_ledger_connections(self, tmp_path):
+        from gap_kernel.execution.fabric import ReplayExecutionError
+        from gap_kernel.verification.execution_ledger import (
+            STATUS_FAILED, STATUS_IN_PROGRESS, ExecutionLedger,
+        )
+
+        initial_fabric, proposal, decision = self._signed_decision()
+        db_path = str(tmp_path / "executions.sqlite")
+        first_ledger = ExecutionLedger(db_path)
+        first_fabric = ExecutionFabric(
+            initial_fabric.world_model,
+            kernel_public_key_hex=initial_fabric._kernel_public_key_hex,
+            execution_ledger=first_ledger,
+        )
+
+        def unavailable(action):
+            raise RuntimeError("transient service failure before any side effect")
+
+        first_fabric.register_executor("query_crm", unavailable)
+        assert not first_fabric.execute(proposal, decision).success
+        assert first_ledger.status(decision.nonce) == STATUS_FAILED
+        first_ledger._conn.close()
+
+        # Hold the recovered dispatch open until every competing connection has
+        # attempted the same nonce. No timing race or sleep decides the result.
+        entered = threading.Event()
+        release = threading.Event()
+        effects = []
+        effects_lock = threading.Lock()
+
+        def dispatch(action):
+            with effects_lock:
+                effects.append(action.target)
+            entered.set()
+            if not release.wait(timeout=10):
+                raise TimeoutError("test did not release the active dispatch")
+            return {"found": True}
+
+        retry_ledger = ExecutionLedger(db_path)
+        retry_fabric = ExecutionFabric(
+            initial_fabric.world_model,
+            kernel_public_key_hex=initial_fabric._kernel_public_key_hex,
+            execution_ledger=retry_ledger,
+        )
+        retry_fabric.register_executor("query_crm", dispatch)
+
+        def competing_claim():
+            competing_ledger = ExecutionLedger(db_path)
+            competing_fabric = ExecutionFabric(
+                initial_fabric.world_model,
+                kernel_public_key_hex=initial_fabric._kernel_public_key_hex,
+                execution_ledger=competing_ledger,
+            )
+
+            def unwanted_dispatch(action):
+                with effects_lock:
+                    effects.append(action.target)
+                return {"found": True}
+
+            competing_fabric.register_executor("query_crm", unwanted_dispatch)
+            try:
+                return competing_fabric.execute(proposal, decision)
+            except Exception as exc:
+                return exc
+            finally:
+                competing_ledger._conn.close()
+
+        with ThreadPoolExecutor(max_workers=5) as workers:
+            running = workers.submit(retry_fabric.execute, proposal, decision)
+            try:
+                assert entered.wait(timeout=5)
+                contenders = [workers.submit(competing_claim) for _ in range(4)]
+                outcomes = [future.result(timeout=5) for future in contenders]
+                assert all(isinstance(outcome, ReplayExecutionError) for outcome in outcomes)
+                assert retry_ledger.status(decision.nonce) == STATUS_IN_PROGRESS
+            finally:
+                release.set()
+            assert running.result(timeout=5).success
+
+        assert effects == [proposal.actions[0].target]
+        with pytest.raises(ReplayExecutionError, match="already been executed"):
+            retry_fabric.execute(proposal, decision)
+        retry_ledger._conn.close()
 
     def test_a_live_lease_refuses_a_second_claim(self):
         from gap_kernel.verification.execution_ledger import (
             ExecutionLedger,
             ExecutionReplayError,
         )
-        import pytest
 
         ledger = ExecutionLedger(lease_seconds=3600)
         ledger.begin("n3", decision_id="d1", proposal_id="p1")
         with pytest.raises(ExecutionReplayError, match="in flight"):
             ledger.begin("n3", decision_id="d1", proposal_id="p1")
+
+
+@pytest.mark.parametrize("merge_method", ["update", "ior", "setdefault"])
+@pytest.mark.parametrize("existing", [False, True])
+def test_bulk_merge_cannot_forge_provenance_but_carries_signed_blobs(
+    merge_method, existing, evidence_authority,
+):
+    honest = {"channel": "crm_of_record"}
+    props = EntityProperties({"gdpr_consent": False})
+    if existing:
+        props[EVIDENCE_PROPERTY] = honest
+    blob = evidence_authority.attest("lead_eu_1", {"gdpr_consent": False})
+    updates = {
+        EVIDENCE_PROPERTY: {"channel": "forged", "attested": True},
+        EVIDENCE_ATTESTATION_PROPERTY: blob,
+        "lead_score": 91,
+    }
+    if merge_method == "update":
+        props.update(updates)
+    elif merge_method == "ior":
+        props |= updates
+    else:
+        for key, value in updates.items():
+            props.setdefault(key, value)
+    assert props.get(EVIDENCE_PROPERTY) == (honest if existing else None)
+    assert props[EVIDENCE_ATTESTATION_PROPERTY] == blob
+    assert props["lead_score"] == 91
+
+class TestExecutorCannotReSignItsOwnOutput:
+    """A signing channel must not turn an executor's write into evidence.
+
+    `update_from_execution` is the path an executor's output takes into the
+    world model. It used to re-mint the entity's attestation whenever the
+    channel carried a signer, so a deployment that wired a signing channel got
+    the laundering back in one call: the executor wrote `gdpr_consent=True` and
+    the same call re-signed it, certifying the agent's own output back to the
+    kernel. An execution result is never a source of record.
+    """
+
+    def _store_with_attested_lead(self):
+        store = WorldModelStore()
+        store.upsert_entity(
+            EntityState(
+                entity_type="lead",
+                entity_id="lead_eu_1",
+                properties={"geo": "DE", "gdpr_consent": False},
+                last_updated=utcnow(),
+                source="crm",
+                obligations=[],
+            ),
+            channel=ATTESTED_CRM,
+        )
+        return store
+
+    def test_a_signing_channel_does_not_re_mint_on_execution_writeback(self):
+        store = self._store_with_attested_lead()
+        entity = store.model.entities["lead_eu_1"]
+        # Positive control: the honest ingest really did produce attested evidence.
+        assert VERIFIER.attests(entity, "gdpr_consent")
+
+        store.update_from_execution(
+            "lead_eu_1", {"gdpr_consent": True}, channel=ATTESTED_CRM
+        )
+
+        entity = store.model.entities["lead_eu_1"]
+        assert entity.properties["gdpr_consent"] is True, "the write is still allowed"
+        assert not VERIFIER.attests(entity, "gdpr_consent"), (
+            "an executor re-signing its own output is the laundering path"
+        )
+
+    def test_the_source_of_record_can_still_attest_the_new_value(self):
+        # De-attestation must be recoverable through the ingest path, or a
+        # legitimate consent update would be permanently unusable.
+        store = self._store_with_attested_lead()
+        store.update_from_execution(
+            "lead_eu_1", {"gdpr_consent": True}, channel=ATTESTED_CRM
+        )
+        store.upsert_entity(
+            EntityState(
+                entity_type="lead",
+                entity_id="lead_eu_1",
+                properties={"geo": "DE", "gdpr_consent": True},
+                last_updated=utcnow(),
+                source="crm",
+                obligations=[],
+            ),
+            channel=ATTESTED_CRM,
+        )
+        assert VERIFIER.attests(store.model.entities["lead_eu_1"], "gdpr_consent")
