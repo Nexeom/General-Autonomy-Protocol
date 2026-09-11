@@ -87,8 +87,9 @@ def test_approve_and_execute_completes_l2_with_valid_signature():
     loop, result, approver_priv = _l2_loop_with_approver()
     decision = result.decisions[-1]
     valid_until = utcnow() + timedelta(minutes=5)
-    # Sign the fabric's canonical OOB message (binds decision/proposal/level/approver/expiry).
+    # Sign the exact approval time, retained by approve_and_execute.
     decision.human_approver_public_key_id = "alice"
+    decision.human_approval_timestamp = utcnow()
     decision.human_approval_valid_until = valid_until
     signature = sign(approver_priv, ExecutionFabric._oob_signed_message(decision))
 

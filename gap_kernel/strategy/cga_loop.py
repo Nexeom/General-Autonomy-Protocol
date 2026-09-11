@@ -573,16 +573,16 @@ class CGALoop:
     ) -> ExecutionResult:
         """Supply side of Fix 4 / Phase H.
 
-        Attach a human Out-of-Band approval — a signature obtained off-channel
-        over ``"<decision id>:<valid_until ISO>"`` — to an L2+ decision the loop
-        surfaced as ``awaiting_approval``, then dispatch it for execution. The
-        Execution Fabric verifies the signature; the loop never holds the
-        approver's private key.
+        Attach a human Out-of-Band approval obtained off-channel over the
+        fabric's canonical v2 payload, including the exact approval timestamp.
+        Supply that timestamp here or on the decision; this method cannot
+        invent one after signing. The Execution Fabric verifies the signature;
+        the loop never holds the approver's private key.
         """
         decision.human_approval_signature = human_approval_signature
         decision.human_approver_public_key_id = approver_key_id
         decision.human_approval_valid_until = valid_until
-        decision.human_approval_timestamp = timestamp or utcnow()
+        decision.human_approval_timestamp = timestamp or decision.human_approval_timestamp
         result = self.execution.execute(proposal, decision)
         # SA-4: an L2+ self-modification is realized here (when the human OOB
         # signature actually dispatches it), so it counts toward capability gain

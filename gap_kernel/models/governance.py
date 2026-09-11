@@ -123,7 +123,9 @@ class GovernanceDecision(BaseModel):
     # an agent-independent channel; the Execution Fabric verifies the signature
     # against a registered public key and consumes it in a persistent replay
     # ledger. This is the enforced control, replacing the prior string checks.
-    human_approval_signature: Optional[str] = None       # hex Ed25519 signature over id+expiry
+    # v2 binds the approval timestamp as well as decision, proposal, level,
+    # approver and expiry. Previously issued v1 approvals must be signed again.
+    human_approval_signature: Optional[str] = None       # hex Ed25519 over OOB v2 payload
     human_approver_public_key_id: Optional[str] = None   # key id resolved via PublicKeyRegistry
     human_approval_timestamp: Optional[datetime] = None
     human_approval_valid_until: Optional[datetime] = None

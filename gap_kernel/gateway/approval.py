@@ -3,7 +3,7 @@ import json
 from datetime import timedelta
 from pathlib import Path
 
-from gap_kernel._time import utcnow
+from gap_kernel._time import ensure_utc, utcnow
 from gap_kernel.crypto.signing import sign, verify
 from gap_kernel.execution.fabric import ExecutionFabric
 from gap_kernel.models.governance import GovernanceDecision, canonical_decision_payload
@@ -21,8 +21,10 @@ def validate_request(response: dict, approver_file: str | Path):
                           decision.decision_signature or "")):
         raise ValueError("request does not contain an authentic, content-bound L2 decision")
     now = utcnow()
-    if decision.expires_at is None or decision.expires_at <= now:
+    if decision.expires_at is None or ensure_utc(decision.expires_at) <= now:
         raise ValueError("decision expired")
+    if ensure_utc(decision.evaluated_at) > now:
+        raise ValueError("decision evaluation is in the future")
     return identity, decision
 
 
@@ -32,7 +34,7 @@ def sign_approval(response: dict, approver_file: str | Path):
     decision = decision.model_copy(update={
         "human_approver_public_key_id": identity["key_id"],
         "human_approval_timestamp": now,
-        "human_approval_valid_until": min(decision.expires_at, now + timedelta(seconds=120)),
+        "human_approval_valid_until": min(ensure_utc(decision.expires_at), now + timedelta(seconds=120)),
     })
     signature = sign(identity["private_key_hex"], ExecutionFabric._oob_signed_message(decision))
     return {"human_approver_public_key_id": identity["key_id"],

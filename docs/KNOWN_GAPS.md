@@ -16,6 +16,34 @@ No newly reproduced critical remains unaddressed in the bounded regression
 scenarios below. This is not a claim that no unknown critical exists. Read the
 deployment-specific architectural limits before enabling real tools.
 
+### September review remediation
+
+Five further reproduced findings are addressed in the current source. The
+regressions below define the earned scope; earlier CI/evaluation artifacts do
+not validate these later changes.
+
+| Finding | Current behavior and regression evidence |
+|---|---|
+| Required phase approval could be bypassed by a lower outer authorization level. | Required phase levels now raise the signed execution authorization; L2/L3 wait for approval and L4 escalates without agent dispatch. `tests/test_phase_authority.py`. All phase checks still run before dispatch on the same inputs; a real outcome-phase lifecycle remains unimplemented. |
+| Human approval time was not signed. | The v2 approval payload binds the exact timestamp and validates its interval against the decision. v1 approvals are rejected. `tests/test_dispatch_authority.py`; [migration instructions](APPROVAL_MIGRATION.md). |
+| A later batch action could start after authority/evidence expired. | The fabric checks decision/approval validity before every new action; the gateway's trusted callback checks current policy, evidence and halt state. Guard failure stops remaining dispatch and retains completed receipts. `tests/test_dispatch_authority.py`, `tests/test_gateway_recovery.py`. |
+| Interrupted/expired gateway work could become stranded, and lease expiry could admit overlapping dispatch. | A shared requests-database writer lock serializes gateway instances and releases on process death. Explicit reauthorization preserves the same proposal, idempotency keys and completed receipts while requiring fresh L2 approval. `tests/test_gateway_recovery.py`, `tests/test_execution_journal.py`. This requires common SQLite state; HTTPX I/O timeouts do not bound total execution duration. |
+| A committed effect could lose its result/audit record after lineage or response persistence failed. | Durable outcome/status settlement and action receipts support reconstruction and idempotent lineage delivery. Responses expose pending audit delivery, and the audit endpoint distinguishes chain validity from completeness. `tests/test_execution_journal.py`, `tests/test_gateway_audit_recovery.py`. An arbitrary external effect without a durable tool receipt remains potentially ambiguous. |
+
+See [gateway recovery](GATEWAY.md#recovery-and-reauthorization) for the operator
+flow and limitations. These changes do not add an external audit witness,
+automatic evidence renewal or an exactly-once contract for arbitrary tools.
+
+The follow-up PR review reproduced three further defects in those changes.
+Receipt-persistence failure now records explicit uncertainty instead of an
+empty failure with a complete audit; recovery and restart cases are covered by
+`tests/test_gateway_receipt_recovery.py`. Embedded executor receipts use the
+same JSON normalization as execution results, preserving support for datetime,
+UUID and Decimal values without repeating completed actions; see
+`tests/test_executor_receipt_serialization.py`. Execution-ledger schema creation
+and migration now share one SQLite write transaction, with concurrent fresh
+startup, upgrade and rollback coverage in `tests/test_execution_migration_concurrency.py`.
+
 **September remediation:** failed retries now atomically persist `in_progress`
 before dispatch; the durable failure-then-concurrency regression proves a second
 claim is refused. Bulk property merges cannot restore the audit-only provenance
@@ -216,6 +244,13 @@ migrates decisions already persisted in a lineage record.
 `create_app(enable_mutating_routes=True)` is now required for the intent,
 world, reconciler, learning and escalation writers.
 `POST /governance/action-types` is gone permanently.
+
+**M3. v1 human approval signatures no longer verify.**
+The approval domain is now `gap.oob_approval.v2`, binding the exact approval
+timestamp as well as decision/proposal identity, authority and expiry. Obtain a
+new signature; an old signature cannot be relabeled or migrated. This change is
+separate from the earlier kernel-decision format change in M1, and the package
+version remains `0.3.0a1`. See [APPROVAL_MIGRATION.md](APPROVAL_MIGRATION.md).
 
 ## Process
 

@@ -1078,10 +1078,11 @@ class GovernanceKernel:
         prior_phase_results: Optional[List[GovernancePhaseResult]] = None,
     ) -> GovernancePhaseResult:
         """
-        Evaluate a single phase in a multi-phase authorization lifecycle.
+        Evaluate one configured phase against the supplied proposal and state.
 
-        Each phase evaluates against different information. Authorization at
-        one phase does not automatically satisfy subsequent phases.
+        This is a pre-dispatch check, not an output-validation lifecycle. The
+        caller must supply any new information; evaluating a named "outcome"
+        phase here does not mean an output has been produced or validated.
 
         ``current_time`` is authoritative only in open/prototype mode; a governed
         kernel ignores it and uses its own clock (see ``_resolve_time``).
@@ -1138,10 +1139,11 @@ class GovernanceKernel:
         current_time: Optional[datetime] = None,
     ) -> List[GovernancePhaseResult]:
         """
-        Evaluate all phases in a multi-phase authorization lifecycle.
+        Evaluate configured phases before dispatch against the same input state.
 
-        Returns results for each phase. All phases are linked in
-        Decision Lineage as one governed process.
+        Returns results in configuration order. evaluate_proposal folds required
+        phase authority into its signed decision so execution enforces it. A
+        lifecycle that reevaluates actual outputs after execution is not built.
         """
         results = []
         for phase in phases:
@@ -1470,7 +1472,8 @@ class GovernanceKernel:
                         action_type_id=action_type_id,
                     )
 
-        # 6. Multi-Phase Authorization: if action type has phases, evaluate them
+        # 6. Pre-dispatch phase checks. These all see the same proposal/state;
+        # they are not post-execution output validation.
         phase_results = []
         if action_type_id:
             action_spec = self._action_type_registry.get(action_type_id)
@@ -1482,6 +1485,20 @@ class GovernanceKernel:
                     world_state=world_state,
                     current_time=current_time,
                 )
+                # The fabric enforces the outer decision, not nested phase
+                # metadata. Required phase authority must therefore become part
+                # of that signed dispatch authorization, including authority
+                # raised by the phase's conditional escalation rule.
+                for phase, result in zip(action_spec.phase_config, phase_results):
+                    if phase.required:
+                        auth_level = _max_auth(auth_level, result.authorization_level)
+                tier = {
+                    AuthorizationLevel.L0: "auto_execute",
+                    AuthorizationLevel.L1: "notify_proceed",
+                    AuthorizationLevel.L2: "require_approval",
+                    AuthorizationLevel.L3: "require_approval",
+                    AuthorizationLevel.L4: "escalate",
+                }[auth_level]
                 for pr in phase_results:
                     if pr.verdict != GovernanceVerdict.APPROVED:
                         return GovernanceDecision(
@@ -1500,6 +1517,31 @@ class GovernanceKernel:
                             action_type_id=action_type_id,
                             phase_results=phase_results,
                         )
+                if auth_level == AuthorizationLevel.L4:
+                    return GovernanceDecision(
+                        id=decision_id,
+                        proposal_id=proposal.id,
+                        verdict=GovernanceVerdict.ESCALATE,
+                        violated_constraints=[],
+                        rejection_reason="phase_requires_human_only",
+                        rejection_detail=(
+                            "A required phase requires L4 (Human Only); "
+                            "the proposal is not authorized for agent execution."
+                        ),
+                        authorization_level=auth_level,
+                        authorization_tier=tier,
+                        temporal_context=_get_temporal_snapshot(current_time),
+                        policy_snapshot=_serialize_active_policies(active_constraints),
+                        evaluated_at=current_time,
+                        uncertainty=uncertainty,
+                        action_type_id=action_type_id,
+                        phase_results=phase_results,
+                        escalation_triggered=escalation_triggered,
+                        escalation_reason=escalation_reason,
+                        original_authorization_level=original_auth_level_str,
+                        escalated_authorization_level=escalated_auth_level_str,
+                        escalation_evidence=escalation_evidence,
+                    )
 
         # 7. Approved — record escalation details if triggered
         return GovernanceDecision(

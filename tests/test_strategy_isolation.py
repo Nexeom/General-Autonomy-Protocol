@@ -289,6 +289,7 @@ def test_approve_and_execute_records_every_modified_capability():
     decision = result.decisions[-1]
     valid_until = utcnow() + timedelta(minutes=5)
     decision.human_approver_public_key_id = "alice"
+    decision.human_approval_timestamp = utcnow()
     decision.human_approval_valid_until = valid_until
     signature = sign(approver_priv, ExecutionFabric._oob_signed_message(decision))
 

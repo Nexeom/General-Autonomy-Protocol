@@ -199,7 +199,7 @@ def test_kernel_signature_survives_downstream_oob_approval():
 
     # Human OOB approval, added AFTER the kernel signed.
     approver_priv, approver_pub = generate_keypair()
-    valid_until = utcnow() + timedelta(minutes=5)
+    valid_until = decision.expires_at
     decision.human_approver_public_key_id = "alice"
     decision.human_approval_timestamp = utcnow()
     decision.human_approval_valid_until = valid_until

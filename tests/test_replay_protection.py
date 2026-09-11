@@ -86,7 +86,7 @@ def _kernel_signed(kernel, proposal):
 def _attach_oob(decision, approver_priv, *, key_id=APPROVER, valid_until=None):
     decision.human_approver_public_key_id = key_id
     decision.human_approval_timestamp = utcnow()
-    decision.human_approval_valid_until = valid_until or (utcnow() + timedelta(minutes=5))
+    decision.human_approval_valid_until = valid_until or decision.expires_at
     decision.human_approval_signature = sign(
         approver_priv, ExecutionFabric._oob_signed_message(decision)
     )
@@ -470,9 +470,14 @@ def test_a_second_decision_cannot_spend_the_same_approval():
         _world(), kernel_public_key_hex=kernel_pub,
         public_key_registry=PublicKeyRegistry({APPROVER: approver_pub}),
     )
-    assert fabric.execute(proposal, _build("nonce_a")).success is True
+    first = _build("nonce_a")
+    assert fabric.execute(proposal, first).success is True
+    # Reuse the exact approval, including its now-signed timestamp. Minting a
+    # second approval at a different time would test new authority, not replay.
+    second = first.model_copy(update={"nonce": "nonce_b"})
+    second.decision_signature = sign(kernel_priv, canonical_decision_payload(second))
     with pytest.raises(OOBVerificationError, match="already been used"):
-        fabric.execute(proposal, _build("nonce_b"))
+        fabric.execute(proposal, second)
 
 
 # --- ExecutionLedger state machine ------------------------------------------

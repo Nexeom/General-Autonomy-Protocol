@@ -153,7 +153,7 @@ curl --fail-with-body --silent --show-error \
 ```
 
 Expected behavior is `awaiting_approval` before the human step, one completed
-outbox write afterward, and a valid local lineage chain. Executing before
+outbox write afterward, and audit `valid: true` and `complete: true`. Executing before
 approval must fail; presenting a completed authorization again must fail. An
 authentic but expired decision or approval must also fail. Capture actual
 responses and tool-side state in the review; the expected behavior here is not
@@ -161,8 +161,80 @@ a claim that this manual workflow has been independently tested.
 
 Decisions expire after four minutes in this reference gateway. An approval
 expires at the earlier of its decision expiry and two minutes after signing.
-Dispatch also reevaluates policy and evidence, so a still-signed decision cannot
-override expired evidence. The service does not refresh evidence automatically.
+Before **each new action**, the gateway reevaluates policy and evidence and the
+fabric rechecks decision/approval validity. Expiry or a halt stops subsequent
+actions, preserving completed receipts; it cannot cancel a call already in
+progress. The service does not refresh evidence automatically.
+
+Human approvals now use the v2 signed format, including the exact approval
+timestamp. Old v1 approvals are rejected; see
+[APPROVAL_MIGRATION.md](APPROVAL_MIGRATION.md) before updating a custom approver.
+This format change does not change the package version or kernel decision format.
+
+## Recovery and reauthorization
+
+After a timeout, interruption or error, first retrieve the **same** request with
+`GET /v1/requests/{request_id}`. This reconciles durable results and retries their
+delivery to signed lineage without dispatching a tool. A completed request remains
+spent. An `interrupted` request has an abandoned execution claim; its tool outcome
+may still require a retry using the original idempotency key.
+
+If an unfinished request's decision has expired, explicitly request fresh
+authority for its existing proposal:
+
+```bash
+curl --fail-with-body --silent --show-error --request POST \
+  -H "Authorization: Bearer $GAP_GATEWAY_TOKEN" \
+  "$GAP_GATEWAY_URL/v1/requests/manual-demo-1/reauthorize" > renewed-request.json
+
+python -m gap_kernel.gateway.approval renewed-request.json \
+  --identity "$GAP_DEMO_DIR/operator/approver.json" --output renewed-approval.json
+
+curl --fail-with-body --silent --show-error \
+  -H "Authorization: Bearer $GAP_GATEWAY_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data @renewed-approval.json "$GAP_GATEWAY_URL/v1/requests/manual-demo-1/execute"
+```
+
+Reauthorization performs no tool call. It preserves the request ID, original
+proposal/digest, tool idempotency keys and recorded completed-action receipts.
+It issues a new signed decision/nonce and supersedes the stored authority; an L2
+request needs a **fresh** human approval, and the old approval cannot release it.
+Execution skips recorded successes and resumes the remaining actions. If only
+the approval expired while the decision remains valid, obtain a new approval
+for that decision through the operator flow.
+
+Renewal requires the original deployment configuration and still-valid policy
+and evidence. It refuses completed/rejected requests and a halted gateway. It
+does not refresh consent or bypass an expired attestation. A configuration or
+evidence-file change requires a new proposal; reconcile earlier effects before
+creating a new request, whose tool idempotency identity would differ.
+
+Tool completion and audit delivery are separate states. A response can be
+`status: completed` with `audit_status: pending` if the tool outcome settled but
+lineage delivery failed. `pending_audit_events` counts undelivered journal events.
+Retrieval, execution/reproposal of the same request, or `GET /v1/audit` retries
+delivery using stable event IDs, without repeating settled tool effects. A
+delivered outcome has `audit_status: recorded`. An unresolved interrupted
+attempt, or an older completed ledger that lacks both an outcome journal and
+stored result, reports `recovery_required` rather than inventing receipts.
+When recoverable attempt authority is available, interruption is recorded as an
+unknown outcome with its original decision and known completed receipts.
+If a tool returns successfully but its completion receipt cannot be saved, the
+attempt records `failure_stage: receipt_persistence` and `outcome_unknown: true`.
+The request remains `interrupted` with `audit_status: recovery_required`, and
+audit completeness remains false across restart. After restoring storage, retry
+the same request with valid authority and the tool's original idempotency key;
+successful recovery resolves the current uncertainty while retaining the failed
+attempt in history. Tools without an idempotency contract need reconciliation
+before retrying an uncertain effect.
+
+The audit endpoint's `valid` checks the signed chain. Its separate `complete`
+field reports whether known settled outcomes have been delivered and no legacy
+or interrupted recovery gap remains; inspect `pending_outcomes` and
+`recovery_required` as well. This remains a statement about local recovery state,
+not independent proof of every external effect. Investigate `interrupted`
+requests and tool-side receipts before claiming completion.
 
 ## LangGraph fixture
 
@@ -276,10 +348,25 @@ Inspect each returned check as well as the command's exit code.
 - Requests, execution claims, approvals and lineage use durable SQLite state.
   Changing policy/configuration/evidence requires reproposal; stored authority
   is bound to its original deployment configuration.
+- Every reference gateway instance must share the **same** requests and ledger
+  databases. A SQLite writer transaction spans dispatch and reauthorization,
+  serializing instances; process death releases that lock. A new holder can
+  recover an abandoned claim without waiting for the generic fabric lease.
+  Lock contention can return `gateway_busy` (503). This is a shared SQLite
+  deployment contract, not distributed coordination across separate state stores.
+  HTTPX timeouts limit individual I/O waits, not total call or batch duration;
+  they do not establish that a dispatch finishes before the execution lease.
+- Settled outcome, authorized decision and execution status commit together in
+  the execution ledger, with completed-action receipts and immutable audit
+  context retained for recovery. Delivery to lineage is a separate retryable
+  step. A journal/storage failure can still leave an operation unresolved;
+  a valid chain alone does not prove complete outcome capture.
 - The demonstration outbox commits its idempotency record and note together.
-  This supports safe retry when a response is lost. A different external tool
-  needs its own idempotency or reconciliation design; GAP cannot infer that a
-  timed-out external side effect never happened.
+  Keeping the proposal digest stable across reauthorization supports retry when
+  a response is lost. A different external tool needs its own idempotency,
+  fencing or reconciliation design; GAP cannot infer that a timed-out external
+  side effect never happened and does not provide arbitrary-tool exactly-once
+  execution.
 - The gateway holds both the local lineage store and its signing key. Audit
   verification detects some tampering, but there is no independent witness or
   external append-only retention.
